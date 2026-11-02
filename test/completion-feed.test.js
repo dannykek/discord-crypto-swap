@@ -47,6 +47,22 @@ describe('completed-deal feed', () => {
     expect(repositories.completeCompletionSummary).toHaveBeenCalledWith('swap', 'existing-message');
   });
 
+  it.each([[50001, true], [10003, true], [50013, true], [undefined, false], [500, false]])(
+    'gives up on Discord error %s only when it is permanent (%s)', async (code, permanent) => {
+      const completed = swap();
+      const error = Object.assign(new Error('discord'), { code });
+      const channel = { messages: { fetch: vi.fn().mockRejectedValue(error) }, send: vi.fn() };
+      const repositories = repositoryMocks(completed);
+      repositories.releaseCompletionSummary.mockResolvedValue(permanent);
+      const service = makeService(channel, repositories);
+
+      await expect(service.publishCompletionSummary(completed)).resolves.toBe(false);
+
+      expect(channel.send).not.toHaveBeenCalled();
+      expect(repositories.releaseCompletionSummary).toHaveBeenCalledWith('swap', { permanent });
+      expect(service.logger.warn.mock.calls[0][0]).toMatchObject({ abandoned: permanent });
+    });
+
   it('omits attribution for a missing or invalid user id without blocking publication', async () => {
     const completed = { ...swap(), user_id: 'not-a-discord-user' };
     const channel = {

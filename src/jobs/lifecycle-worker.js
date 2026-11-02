@@ -2,6 +2,8 @@ import { ChannelType } from 'discord.js';
 
 const ROUTE_WATCH_INTERVAL_MS = 60_000;
 const ROUTE_WATCH_LEASE_MS = 5 * 60_000;
+// Well above the slowest preview (provider requests time out after 15-20 seconds).
+const STALE_QUOTE_LOADING_MS = 2 * 60_000;
 
 export class LifecycleWorker {
   constructor({ repositories, client, ticketService, config, logger }) {
@@ -44,6 +46,14 @@ export class LifecycleWorker {
             errorName: error.name,
             errorCode: 'ROUTE_WATCH_CHECK_FAILED',
           }, 'Watched popular route check will be retried');
+        }
+      }
+
+      if (typeof this.repositories.resetStaleQuoteLoading === 'function') {
+        const stuck = await this.repositories.resetStaleQuoteLoading(new Date(now - STALE_QUOTE_LOADING_MS));
+        for (const ticket of stuck) {
+          this.logger.warn({ ticketId: ticket.id, errorCode: 'QUOTE_TIMEOUT' }, 'Preview stuck on quote loading was reset');
+          await this.ticketService.renderProgress(ticket.id).catch(() => null);
         }
       }
 

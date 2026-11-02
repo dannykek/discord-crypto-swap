@@ -7,7 +7,30 @@ import {
   quoteAppFeesMatch,
   quoteAssetIdsMatch,
   statusQuoteMatchesStored,
+  withTimeout,
 } from '../src/services/oneclick-client.js';
+import { classifyOperationalError } from '../src/services/error-classifier.js';
+
+describe('1Click request time limit', () => {
+  it('cancels a hung request and fails as a temporary outage', async () => {
+    vi.useFakeTimers();
+    try {
+      const hung = Object.assign(new Promise(() => {}), { cancel: vi.fn() });
+      const result = withTimeout(hung, 20_000).catch(error => error);
+      await vi.advanceTimersByTimeAsync(20_000);
+      const error = await result;
+      expect(error.name).toBe('OneClickTimeoutError');
+      expect(hung.cancel).toHaveBeenCalledOnce();
+      expect(classifyOperationalError(error, { operation: 'preview_quote' }).code).toBe('ONECLICK_UNAVAILABLE');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('passes through a timely response', async () => {
+    await expect(withTimeout(Promise.resolve('ok'), 20_000)).resolves.toBe('ok');
+  });
+});
 
 function config(overrides = {}) {
   return {
@@ -23,7 +46,7 @@ function config(overrides = {}) {
 }
 
 describe('OneClick request policy', () => {
-  it('builds exact-input origin-chain requests without fees', () => {
+  it('builds flexible-input origin-chain requests without fees', () => {
     const client = new OneClickClient(config());
     const request = client.buildQuoteRequest({
       dry: true,
@@ -35,7 +58,7 @@ describe('OneClick request policy', () => {
     });
     expect(request).toMatchObject({
       dry: true,
-      swapType: 'EXACT_INPUT',
+      swapType: 'FLEX_INPUT',
       depositType: 'ORIGIN_CHAIN',
       refundType: 'ORIGIN_CHAIN',
       recipientType: 'DESTINATION_CHAIN',

@@ -49,7 +49,7 @@ export class StatusWorker {
 
   async refreshSwap(swap, { announce = true, rethrow = false } = {}) {
     const deadline = swap.quote_deadline ? new Date(swap.quote_deadline).getTime() : Date.now();
-    const fundingExpired = !['changenow', 'changelly', 'fixedfloat', 'relay'].includes(swap.executable_quote?.provider) && swap.status === 'PENDING_DEPOSIT' && Date.now() > deadline;
+    const fundingExpired = !['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap.executable_quote?.provider) && swap.status === 'PENDING_DEPOSIT' && Date.now() > deadline;
     const trackingExpired = Date.now() > deadline + this.config.staleTrackingMs;
     if (fundingExpired || trackingExpired) {
       const stale = await this.repositories.markSwapTrackingStale(swap.id);
@@ -89,7 +89,7 @@ export class StatusWorker {
       if (result.swap && swap.guild_id && !result.swap.guild_id) {
         result.swap = { ...result.swap, guild_id: swap.guild_id };
       }
-      if (!['changenow', 'changelly', 'fixedfloat', 'relay'].includes(swap.executable_quote?.provider)) this.health.oneClickAuthentication = true;
+      if (!['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap.executable_quote?.provider)) this.health.oneClickAuthentication = true;
       if (response.status === 'SUCCESS' && result.swap) {
         await this.ticketService.publishCompletionSummary(result.swap);
         await this.ticketService.notifyCompletionVouch?.(result.swap);
@@ -113,7 +113,7 @@ export class StatusWorker {
       } else if (result.changed) {
         await this.announceStatus(swap.ticket_id, response, { enabled: announce, swap: result.swap });
       }
-      if (!terminal && result.swap && !['changenow', 'changelly', 'fixedfloat', 'relay'].includes(swap.executable_quote?.provider) && hasDestinationTransaction(response)) {
+      if (!terminal && result.swap && !['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap.executable_quote?.provider) && hasDestinationTransaction(response)) {
         await this.ticketService.notifyPayoutSent(result.swap, response).catch((error) => {
           this.logger.warn({
             swapId: swap.id,
@@ -124,7 +124,7 @@ export class StatusWorker {
       }
       return result.swap;
     } catch (error) {
-      if (error?.status === 401 && !['ChangeNowError', 'ChangellyError', 'FixedFloatError', 'RelayError'].includes(error?.name)) this.health.oneClickAuthentication = false;
+      if (error?.status === 401 && !['ChangeNowError', 'ChangellyError', 'FixedFloatError', 'RelayError', 'ChainflipError'].includes(error?.name)) this.health.oneClickAuthentication = false;
       const attempts = Number(swap.poll_attempts ?? 0) + 1;
       const backoff = Math.min(300_000, 15_000 * 2 ** Math.min(attempts - 1, 5));
       await this.repositories.scheduleSwapRetry(

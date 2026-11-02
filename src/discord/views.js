@@ -351,6 +351,16 @@ function renderPreview(ticket, catalogue, swap) {
     new ButtonBuilder().setCustomId(componentId(ticket.id, 'back')).setLabel('Cancel').setEmoji('❌').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(componentId(ticket.id, 'refresh-preview')).setLabel('Refresh quote').setEmoji('🔄').setStyle(ButtonStyle.Secondary),
   );
+  const backupOffer = !fixedFloat ? swap.dry_quote.backupOffer : null;
+  if (backupOffer) {
+    embed.addFields({
+      name: 'Cheaper with backup provider',
+      value: `Our backup provider currently gives ~${safeCode(backupOffer.amountOutFormatted)} ${safeCode(destination?.symbol)} (${safeCode(backupOffer.cost)} quoted cost). Its rate floats until your deposit confirms.`,
+    });
+    actions.addComponents(new ButtonBuilder().setCustomId(componentId(ticket.id, 'preview-backup')).setLabel('Use backup').setStyle(ButtonStyle.Primary));
+  } else if (fixedFloat) {
+    actions.addComponents(new ButtonBuilder().setCustomId(componentId(ticket.id, 'preview-main')).setLabel('Use main providers').setStyle(ButtonStyle.Secondary));
+  }
   if (changeNow && !fixedFloat) embed.addFields({
     name: `${providerName} fallback · floating rate`,
     value: `1Click returned no route for this amount. The received amount is an estimate and may change while your deposit confirms; there is no guaranteed minimum. Bot markup: 0%. ${providerName} service, partner and network costs are included in the estimate. ${providerName} may require verification or support assistance.`,
@@ -393,7 +403,7 @@ function renderActive(ticket, catalogue, swap) {
       { name: ['changenow', 'changelly', 'fixedfloat'].includes(swap.executable_quote?.provider) ? 'Local funding window' : 'Funding deadline', value: `⏰ <t:${deadline}:F> (<t:${deadline}:R>) — do not send after this time.` },
     );
   if (swap.deposit_memo) embed.addFields({ name: 'Memo', value: `\`${safeCode(swap.deposit_memo)}\`` });
-  if (swap.executable_quote.provider === 'relay' && swap.last_status_response?.requiresAttention) {
+  if (['relay', 'chainflip'].includes(swap.executable_quote.provider) && swap.last_status_response?.requiresAttention) {
     embed.addFields({ name: 'Swap needs review', value: 'Do not send another deposit. Contact bot support with this ticket; automatic settlement and refund tracking continue.' });
   }
   if (changeNow) {
@@ -493,7 +503,7 @@ export function statusUpdateEmbed(statusResponse, context = {}) {
     ? 'A partial deposit was detected. The swap can continue after the remaining quoted amount arrives.'
     : defaultDescription;
   const embed = new EmbedBuilder().setColor(color).setTitle(label).setDescription(description).setTimestamp(new Date(statusResponse.updatedAt ?? Date.now()));
-  if (statusResponse.provider === 'relay' && statusResponse.requiresAttention) {
+  if (['relay', 'chainflip'].includes(statusResponse.provider) && statusResponse.requiresAttention) {
     embed.setTitle('Swap needs review').setDescription('Do not send another deposit. Contact bot support with this ticket; automatic settlement and refund tracking continue.');
   }
   if (statusResponse.provider === 'fixedfloat' && statusResponse.providerStatus === 'EXPIRED') {
@@ -744,13 +754,13 @@ function finalizedSettlementAmounts(swap, destinationAsset) {
     amountOutFormatted: exactFormattedAmount(details.amountOut, destinationAsset?.decimals)
       ?? firstPopulatedValue(details.amountOutFormatted, quote.amountOutFormatted, 'n/a'),
     amountInUsd: firstPopulatedValue(
-      ['changenow', 'changelly', 'fixedfloat', 'relay'].includes(swap.executable_quote?.provider) ? details.amountInUsd : null,
+      ['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap.executable_quote?.provider) ? details.amountInUsd : null,
       quote.amountInUsd,
       details.depositedAmountUsd,
       details.amountInUsd,
       swap.amount_usd_requested,
     ),
-    amountOutUsd: firstPopulatedValue(['changenow', 'changelly', 'fixedfloat', 'relay'].includes(swap.executable_quote?.provider) ? details.amountOutUsd : null, quote.amountOutUsd, details.amountOutUsd),
+    amountOutUsd: firstPopulatedValue(['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap.executable_quote?.provider) ? details.amountOutUsd : null, quote.amountOutUsd, details.amountOutUsd),
   };
 }
 

@@ -1,9 +1,11 @@
 import { fromBaseUnits } from '../utils/amounts.js';
 import { transactionExplorerUrl } from './transaction-explorer.js';
 
-const CHAINS = { eth: 1, base: 8453, arb: 42161, op: 10, bsc: 56, pol: 137, avax: 43114, sol: 792703809, btc: 8253038 };
-const NATIVE = { eth: 'ETH', base: 'ETH', arb: 'ETH', op: 'ETH', bsc: 'BNB', pol: 'POL', avax: 'AVAX', sol: 'SOL', btc: 'BTC' };
-const NATIVE_ADDRESSES = { sol: '11111111111111111111111111111111', btc: 'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmql8k8' };
+const CHAINS = { eth: 1, base: 8453, arb: 42161, op: 10, bsc: 56, pol: 137, avax: 43114, sol: 792703809, btc: 8253038, tron: 728126428, xrp: 537724 };
+const NATIVE = { eth: 'ETH', base: 'ETH', arb: 'ETH', op: 'ETH', bsc: 'BNB', pol: 'POL', avax: 'AVAX', sol: 'SOL', btc: 'BTC', tron: 'TRX', xrp: 'XRP' };
+const NATIVE_ADDRESSES = { sol: '11111111111111111111111111111111', btc: 'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmql8k8', tron: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb', xrp: 'xrp' };
+// Relay offers no deposit addresses on XRP, only payouts to it.
+const DESTINATION_ONLY = new Set(['xrp']);
 const ZERO = '0x0000000000000000000000000000000000000000';
 const STATES = { waiting: 'PENDING_DEPOSIT', depositing: 'KNOWN_DEPOSIT_TX', pending: 'PROCESSING', submitted: 'PROCESSING', delayed: 'PROCESSING', success: 'SUCCESS', refund: 'REFUNDED', failure: 'PROCESSING' };
 
@@ -73,20 +75,22 @@ export class RelayClient {
   async getQuote(parameters) {
     const { originAsset, destinationAsset, amountBase, recipient, refundTo, dry } = parameters;
     const origin = relayAsset(originAsset), destination = relayAsset(destinationAsset);
-    if (!origin || !destination) throw new RelayError('NO_LIQUIDITY_ROUTE');
+    if (!origin || !destination || DESTINATION_ONLY.has(originAsset.blockchain)) throw new RelayError('NO_LIQUIDITY_ROUTE');
     if (!validAddress(recipient) || !validAddress(refundTo) || sameAddress(refundTo, NATIVE_ADDRESSES[originAsset.blockchain] ?? ZERO)) throw new RelayError('INVALID_REFUND_ADDRESS');
     const chains = await this.getChains();
     const solver = chains.find(chain => chain.id === origin.chainId)?.solverCurrencies;
     if (!solver?.some(currency => sameAddress(currency.address, origin.address) && currency.decimals === origin.decimals)) throw new RelayError('NO_LIQUIDITY_ROUTE');
     const ttl = Math.floor(this.config.fundingDeadlineMs / 1000);
     const createdAt = Date.now();
-    // Strict single-use addresses prevent an old ticket's address being reused
-    // for a later order. Always refund to the user's explicit origin address.
+    // Open addresses swap whatever amount arrives (re-quoted at deposit time,
+    // refunded only below the minimum rate) instead of refunding mismatches.
+    // A later deposit to the same address still pays this ticket's recipient.
+    // Always refund to the user's explicit origin address.
     // The live API validates user on the origin chain even for deposit mode.
     // Use the user's origin refund wallet, never the destination-chain wallet.
     const request = { user: refundTo, recipient, refundTo, originChainId: origin.chainId, originCurrency: origin.address,
       destinationChainId: destination.chainId, destinationCurrency: destination.address, amount: amountBase,
-      tradeType: 'EXACT_INPUT', useDepositAddress: true, strict: true, refundOnOrigin: true,
+      tradeType: 'EXACT_INPUT', useDepositAddress: true, strict: false, refundOnOrigin: true,
       slippageTolerance: String(this.config.slippageBps), ttl };
     const response = await this.request('/quote/v2', request);
     const { currencyIn, currencyOut } = response.details ?? {};
@@ -122,11 +126,13 @@ export class RelayClient {
     if (!Array.isArray(result.requests) || result.continuation) invalid();
     const rows = result.requests.filter(row => sameAddress(row.depositAddress?.address, swap.deposit_address));
     for (const row of rows) {
-      if (row.depositAddress.type !== 'strict' || !sameAddress(row.recipient, swap.recipient) || !sameAddress(row.refundTo, swap.refund_to)) invalid();
+      // Swaps created before open addresses were adopted used strict ones.
+      if (!['strict', 'open'].includes(row.depositAddress.type) || !sameAddress(row.recipient, swap.recipient) || !sameAddress(row.refundTo, swap.refund_to)) invalid();
     }
     const active = rows.filter(row => !row.supersededByRequestId && !row.duplicateDeposits?.parentRequestId);
-    if (active.length > 1) invalid();
-    const row = active[0];
+    if (active.length > 1 && active.some(row => row.depositAddress.type !== 'open')) invalid();
+    // An open address can receive repeat deposits; the ticket follows the first one.
+    const row = active.sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))[0];
     if (!row) return { provider: 'relay', status: 'PENDING_DEPOSIT', updatedAt: new Date().toISOString(), swapDetails: {} };
     if (!/^0x[0-9a-f]{64}$/i.test(row.id ?? '')) invalid();
     const response = await this.request(`/intents/status/v3?requestId=${encodeURIComponent(row.id)}`);

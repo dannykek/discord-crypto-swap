@@ -10,8 +10,15 @@ export function payoutAmountRange(swap) {
   const quotedAmount = parseAtomicAmount(quote.amountOut);
   if (quotedAmount === null) return null;
   const quotedMinimum = parseAtomicAmount(quote.minAmountOut) ?? quotedAmount;
-  const minimum = quotedMinimum <= quotedAmount ? quotedMinimum : quotedAmount;
-  const maximum = (quotedAmount * 102n + 99n) / 100n;
+  let minimum = quotedMinimum <= quotedAmount ? quotedMinimum : quotedAmount;
+  let maximum = (quotedAmount * 102n + 99n) / 100n;
+  // Flexible deposits convert whatever arrived, so scale to the deposited amount.
+  const deposited = parseAtomicAmount(details.depositedAmount);
+  const quotedIn = parseAtomicAmount(quote.amountIn);
+  if (deposited !== null && quotedIn !== null && deposited > 0n && quotedIn > 0n && deposited !== quotedIn) {
+    minimum = (minimum * deposited) / quotedIn;
+    maximum = (maximum * deposited + quotedIn - 1n) / quotedIn;
+  }
   return { minimum, maximum: maximum >= minimum ? maximum : minimum };
 }
 

@@ -321,6 +321,29 @@ export class Repositories {
     return result.rows[0] ?? null;
   }
 
+  // A ticket left on the quote step (restart, hung request) goes back to the
+  // refund-address step, where sending the address retries the quote.
+  async resetStaleQuoteLoading(cutoff, limit = 25) {
+    const result = await this.pool.query(
+      `UPDATE tickets
+       SET step = 'REFUND_ADDRESS',
+           last_error_code = 'QUOTE_TIMEOUT',
+           last_error_status = NULL,
+           last_error_at = NOW(),
+           updated_at = NOW()
+       WHERE id IN (
+         SELECT id FROM tickets
+         WHERE state = 'OPEN' AND step = 'QUOTE_LOADING' AND updated_at < $1
+         ORDER BY updated_at
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`,
+      [cutoff, limit],
+    );
+    return result.rows;
+  }
+
   async updateTicketFlowIfStep(id, expectedStep, nextStep, stateData) {
     const result = await this.pool.query(
       `UPDATE tickets
@@ -844,6 +867,7 @@ export class Repositories {
          WHERE id = $1
            AND status = 'SUCCESS'
            AND completion_summary_message_id IS NULL
+           AND completion_summary_abandoned_at IS NULL
            AND (completion_summary_claimed_at IS NULL OR completion_summary_claimed_at < $2)
          RETURNING *
        )
@@ -866,13 +890,23 @@ export class Repositories {
     );
   }
 
-  async releaseCompletionSummary(swapId) {
-    await this.pool.query(
+  // Returns true when the summary is given up: at once for permanent failures,
+  // otherwise after maxAttempts failed posts.
+  async releaseCompletionSummary(swapId, { permanent = false, maxAttempts = 50 } = {}) {
+    const result = await this.pool.query(
       `UPDATE swaps
-       SET completion_summary_claimed_at = NULL, updated_at = NOW()
-       WHERE id = $1 AND completion_summary_message_id IS NULL`,
-      [swapId],
+       SET completion_summary_claimed_at = NULL,
+           completion_summary_attempts = completion_summary_attempts + 1,
+           completion_summary_abandoned_at = CASE
+             WHEN $2 OR completion_summary_attempts + 1 >= $3 THEN NOW()
+             ELSE completion_summary_abandoned_at
+           END,
+           updated_at = NOW()
+       WHERE id = $1 AND completion_summary_message_id IS NULL
+       RETURNING completion_summary_abandoned_at`,
+      [swapId, permanent, maxAttempts],
     );
+    return Boolean(result.rows[0]?.completion_summary_abandoned_at);
   }
 
   async claimCompletionVouchDm(swapId, leaseBefore) {
@@ -1085,6 +1119,7 @@ export class Repositories {
        WHERE s.status = 'SUCCESS'
          AND s.executable_quote IS NOT NULL
          AND s.completion_summary_message_id IS NULL
+         AND s.completion_summary_abandoned_at IS NULL
          AND (s.completion_summary_claimed_at IS NULL OR s.completion_summary_claimed_at < $1)
        ORDER BY s.terminal_at NULLS LAST, s.updated_at
        LIMIT $2`,

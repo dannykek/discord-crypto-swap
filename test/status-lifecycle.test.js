@@ -393,6 +393,33 @@ describe('terminal swap lifecycle', () => {
     expect(repositories.markTicketDeleted).toHaveBeenCalledWith('ticket');
   });
 
+  it('resets previews stuck on quote loading for over two minutes and re-renders them', async () => {
+    const repositories = {
+      resetStaleQuoteLoading: vi.fn().mockResolvedValue([{ id: 'stuck-ticket' }]),
+      claimInactiveDraftTickets: vi.fn().mockResolvedValue([]),
+      claimInactiveTicketReminders: vi.fn().mockResolvedValue([]),
+      listTicketsDueForDeletion: vi.fn().mockResolvedValue([]),
+      listPendingCompletionSummaries: vi.fn().mockResolvedValue([]),
+      deleteExpiredRecords: vi.fn().mockResolvedValue(0),
+    };
+    const renderProgress = vi.fn().mockResolvedValue(undefined);
+    const worker = new LifecycleWorker({
+      repositories,
+      client: { channels: { fetch: vi.fn() } },
+      ticketService: { renderProgress, archiveFinalTicketTranscript: vi.fn().mockResolvedValue(false) },
+      config: { ticketInactivityMs: 30 * 60_000, ticketInactivityReminderMs: 5 * 60_000, terminalRetentionMs: 86_400_000, abandonedRetentionMs: 3_600_000 },
+      logger: { info: vi.fn(), warn: vi.fn() },
+    });
+    const before = Date.now();
+
+    await worker.run();
+
+    const cutoff = repositories.resetStaleQuoteLoading.mock.calls[0][0].getTime();
+    expect(before - cutoff).toBeGreaterThanOrEqual(2 * 60_000 - 50);
+    expect(before - cutoff).toBeLessThan(2 * 60_000 + 1_000);
+    expect(renderProgress).toHaveBeenCalledWith('stuck-ticket');
+  });
+
   it('warns an inactive draft once with its exact closing time', async () => {
     const lastActivity = new Date(Date.now() - 5 * 60_000);
     const reminderClaim = new Date();

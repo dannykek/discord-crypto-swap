@@ -18,6 +18,22 @@ const QUOTE_ASSET_ALIASES = new Map([
   ['nep141:btc.omft.near', '1cs_v1:btc:native:coin'],
 ]);
 
+const REQUEST_TIMEOUT_MS = 20_000;
+
+// The SDK waits forever by default; a hung 1Click request must not freeze a ticket.
+export function withTimeout(request, timeoutMs = REQUEST_TIMEOUT_MS) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      request.cancel?.();
+      const error = new Error('1Click did not respond in time.');
+      error.name = 'OneClickTimeoutError';
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
+}
+
 export class QuoteSecurityError extends Error {
   constructor(message, code = 'QUOTE_SECURITY_ERROR') {
     super(message);
@@ -34,7 +50,7 @@ export class OneClickClient {
   }
 
   getTokens() {
-    return OneClickService.getTokens();
+    return withTimeout(OneClickService.getTokens());
   }
 
   deadlineFor(now = Date.now()) {
@@ -50,7 +66,9 @@ export class OneClickClient {
     }
     const request = {
       dry,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      // Swaps whatever arrives at or above amount minus slippage, so small
+      // over- and underpayments convert instead of being refunded.
+      swapType: QuoteRequest.swapType.FLEX_INPUT,
       slippageTolerance: this.config.slippageBps,
       originAsset: originAsset.assetId,
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
@@ -89,14 +107,14 @@ export class OneClickClient {
     let request = this.buildQuoteRequest(parameters);
     let response;
     try {
-      response = await OneClickService.getQuote(request);
+      response = await withTimeout(OneClickService.getQuote(request));
     } catch (error) {
       if (!this.isDepositModeError(error)) throw error;
       const alternate = request.depositMode === QuoteRequest.depositMode.MEMO
         ? QuoteRequest.depositMode.SIMPLE
         : QuoteRequest.depositMode.MEMO;
       request = this.buildQuoteRequest({ ...parameters, depositMode: alternate });
-      response = await OneClickService.getQuote(request);
+      response = await withTimeout(OneClickService.getQuote(request));
     }
 
     this.verifyQuote(response, request, !parameters.dry);
@@ -147,7 +165,7 @@ export class OneClickClient {
   }
 
   async getExecutionStatus(swap) {
-    const response = await OneClickService.getExecutionStatus(swap.deposit_address, swap.deposit_memo ?? undefined);
+    const response = await withTimeout(OneClickService.getExecutionStatus(swap.deposit_address, swap.deposit_memo ?? undefined));
     const storedQuote = swap.executable_quote;
     if (!storedQuote || !verifyQuoteSignature(storedQuote)) {
       throw new QuoteSecurityError('The stored executable quote no longer has a valid signature.', 'INVALID_STORED_QUOTE_SIGNATURE');
@@ -165,11 +183,11 @@ export class OneClickClient {
   }
 
   submitDepositTransaction(swap, txHash) {
-    return OneClickService.submitDepositTx({
+    return withTimeout(OneClickService.submitDepositTx({
       depositAddress: swap.deposit_address,
       txHash,
       memo: swap.deposit_memo ?? undefined,
-    });
+    }));
   }
 
   isTerminal(status) {

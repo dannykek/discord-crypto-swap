@@ -37,7 +37,7 @@ function status(value = 'success') { return { status: value, originChainId: 8453
 afterEach(() => vi.restoreAllMocks());
 
 describe('Relay deposit addresses', () => {
-  it('creates strict address-only quotes with explicit origin refunds and exact atomic amounts', async () => {
+  it('creates open address-only quotes with explicit origin refunds and exact atomic amounts', async () => {
     const { client, fetchImpl } = mockClient([chains, quote()]);
     const result = await client.getQuote({ ...params, dry: false });
     expect(result.quote.depositAddress).toBe(deposit);
@@ -45,7 +45,7 @@ describe('Relay deposit addresses', () => {
     expect(result.quote.amountOut).toBe(currencyOut.amount);
     expect(result.quote.minAmountOut).toBe(currencyOut.minimumAmount);
     const body = JSON.parse(fetchImpl.mock.calls[1][1].body);
-    expect(body).toMatchObject({ useDepositAddress: true, strict: true, refundTo: address, refundOnOrigin: true, ttl: 3600, amount: params.amountBase, slippageTolerance: '50' });
+    expect(body).toMatchObject({ useDepositAddress: true, strict: false, refundTo: address, refundOnOrigin: true, ttl: 3600, amount: params.amountBase, slippageTolerance: '50' });
     expect(fetchImpl.mock.calls[1][1].headers['x-api-key']).toBe('test-key');
     expect(JSON.stringify(result)).not.toContain('test-key');
   });
@@ -73,6 +73,14 @@ describe('Relay deposit addresses', () => {
     const { client, fetchImpl } = mockClient([chains]);
     await expect(client.getQuote({ ...params, originAsset: { ...originAsset, contractAddress: deposit } })).rejects.toMatchObject({ code: 'NO_LIQUIDITY_ROUTE' });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it('maps Tron and XRP, and never takes deposits on XRP', async () => {
+    expect(relayAsset({ blockchain: 'tron', symbol: 'TRX', decimals: 6 })).toEqual({ chainId: 728126428, address: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb', decimals: 6 });
+    expect(relayAsset({ blockchain: 'tron', symbol: 'USDT', decimals: 6, contractAddress: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t' }).address).toBe('TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t');
+    expect(relayAsset({ blockchain: 'xrp', symbol: 'XRP', decimals: 6 })).toEqual({ chainId: 537724, address: 'xrp', decimals: 6 });
+    const { client, fetchImpl } = mockClient([chains]);
+    await expect(client.getQuote({ ...params, originAsset: { assetId: 'xrp', blockchain: 'xrp', symbol: 'XRP', decimals: 6 } })).rejects.toMatchObject({ code: 'NO_LIQUIDITY_ROUTE' });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
   it('maps Solana native currency without confusing wrapped SOL', () => {
     expect(relayAsset({ blockchain: 'sol', symbol: 'SOL', decimals: 9 })).toMatchObject({ address: '11111111111111111111111111111111' });
@@ -116,6 +124,19 @@ describe('Relay lifecycle', () => {
     expect(response.swapDetails.amountOut).toBe(currencyOut.amount);
     expect(String(fetchImpl.mock.calls[0][0])).toContain('depositAddress=');
     expect(String(fetchImpl.mock.calls[1][0])).toContain(next.id);
+  });
+  it('follows the first deposit when an open address receives several', async () => {
+    const open = r => ({ ...r, depositAddress: { address: deposit, type: 'open' } });
+    const later = open({ ...row(), id: `0x${'c'.repeat(64)}`, createdAt: '2026-11-01T12:05:00Z' });
+    const first = open({ ...row(), createdAt: '2026-11-01T12:00:00Z' });
+    const { client, fetchImpl } = mockClient([{ requests: [later, first] }, status()]);
+    expect((await client.getExecutionStatus(swap())).status).toBe('SUCCESS');
+    expect(String(fetchImpl.mock.calls[1][0])).toContain(id);
+  });
+  it('still rejects several active orders on a strict address', async () => {
+    const second = { ...row(), id: `0x${'c'.repeat(64)}` };
+    const { client } = mockClient([{ requests: [row(), second] }]);
+    await expect(client.getExecutionStatus(swap())).rejects.toMatchObject({ code: 'RELAY_INVALID_RESPONSE' });
   });
   it('keeps unfunded orders pending', async () => {
     const { client } = mockClient([{ requests: [] }]);

@@ -23,6 +23,16 @@ describe('pre-confirmation payout detection', () => {
     })).toEqual({ minimum: 990n, maximum: 1020n });
   });
 
+  it('scales the expected payout to a flexible deposit that differs from the quote', () => {
+    const quote = { amountIn: '100', amountOut: '1000', minAmountOut: '990' };
+    expect(payoutAmountRange({ last_status_response: { swapDetails: { depositedAmount: '110' } }, executable_quote: { quote } }))
+      .toEqual({ minimum: 1089n, maximum: 1122n });
+    expect(payoutAmountRange({ last_status_response: { swapDetails: { depositedAmount: '99' } }, executable_quote: { quote } }))
+      .toEqual({ minimum: 980n, maximum: 1010n });
+    expect(payoutAmountRange({ last_status_response: { swapDetails: { depositedAmount: '100' } }, executable_quote: { quote } }))
+      .toEqual({ minimum: 990n, maximum: 1020n });
+  });
+
   it('sums only UTXO outputs sent to the receiving address', () => {
     expect(blockCypherOutputAmount({
       outputs: [

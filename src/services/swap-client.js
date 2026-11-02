@@ -3,6 +3,11 @@ import { ChangeNowClient, ChangeNowError } from './changenow-client.js';
 import { ChangellyClient } from './changelly-client.js';
 import { FixedFloatClient } from './fixedfloat-client.js';
 import { RelayClient, RelayError } from './relay-client.js';
+import { ChainflipClient, ChainflipError } from './chainflip-client.js';
+
+function bestQuote(quotes) {
+  return quotes.reduce((best, quote) => (quote && (!best || BigInt(quote.quote.amountOut) > BigInt(best.quote.amountOut)) ? quote : best), null);
+}
 
 export class SwapClient extends OneClickClient {
   constructor(config, options) {
@@ -11,29 +16,30 @@ export class SwapClient extends OneClickClient {
     this.changelly = new ChangellyClient(config, options);
     this.fixedFloat = new FixedFloatClient(config, options);
     this.relay = new RelayClient(config, options);
+    this.chainflip = new ChainflipClient(config, options);
   }
 
   async getVerifiedQuote(parameters) {
     if (parameters.provider === 'relay') return this.relay.getQuote(parameters);
+    if (parameters.provider === 'chainflip') return this.chainflip.getQuote(parameters);
     if (parameters.provider === 'fixedfloat') return this.fixedFloat.getQuote(parameters);
     // Execution stays with the provider explicitly shown in the preview.
     if (!parameters.dry && parameters.provider === 'changenow') return this.changeNow.getQuote(parameters);
     if (!parameters.dry && parameters.provider === 'changelly') return this.changelly.getQuote(parameters);
     // Compare net output in destination atomic units, never rounded dollar
     // values or advertised fee percentages. Confirmation stays pinned.
-    const relayPromise = parameters.dry && this.relay.enabled
-      ? this.relay.getQuote(parameters).then(value => ({ value }), error => ({ error })) : Promise.resolve({});
+    // Ties keep the earlier provider: NEAR, then Relay, then Chainflip.
+    const competing = parameters.dry ? [this.relay, this.chainflip].filter(client => client.enabled)
+      .map(client => client.getQuote(parameters).then(value => value, () => null)) : [];
     try {
       const primary = await super.getVerifiedQuote(parameters);
-      const relay = await relayPromise;
-      if (relay.value && BigInt(relay.value.quote.amountOut) > BigInt(primary.quote.amountOut)) return relay.value;
-      return primary;
+      return bestQuote([primary, ...await Promise.all(competing)]);
     } catch (error) {
       const classification = this.classifyError(error, { operation: 'preview_quote' });
-      const relay = await relayPromise;
+      const alternative = bestQuote(await Promise.all(competing));
       // A primary signature/parameter failure must never be masked by routing.
       if (classification.source === 'security') throw error;
-      if (relay.value) return relay.value;
+      if (alternative) return alternative;
       const fallbacks = [this.changelly, this.changeNow].filter(client => client.enabled);
       if (!fallbacks.length || classification.source !== 'oneclick' || classification.code !== 'NO_LIQUIDITY_ROUTE') throw error;
       if (!parameters.dry) {
@@ -56,8 +62,13 @@ export class SwapClient extends OneClickClient {
     return this.fixedFloat.getIndicativeQuote(parameters);
   }
 
+  getFixedFloatOffer(parameters) {
+    return this.fixedFloat.getBackupOffer(parameters);
+  }
+
   getExecutionStatus(swap) {
     if (swap.executable_quote?.provider === 'relay') return this.relay.getExecutionStatus(swap);
+    if (swap.executable_quote?.provider === 'chainflip') return this.chainflip.getExecutionStatus(swap);
     if (swap.executable_quote?.provider === 'fixedfloat') return this.fixedFloat.getExecutionStatus(swap);
     if (swap.executable_quote?.provider === 'changelly') return this.changelly.getExecutionStatus(swap);
     return swap.executable_quote?.provider === 'changenow'
@@ -70,6 +81,7 @@ export class SwapClient extends OneClickClient {
 
   submitDepositTransaction(swap, txHash) {
     if (swap.executable_quote?.provider === 'relay') throw new RelayError('RELAY_AUTOMATIC_DETECTION', 'Deposits are detected automatically. Use Check status after sending.');
+    if (swap.executable_quote?.provider === 'chainflip') throw new ChainflipError('CHAINFLIP_AUTOMATIC_DETECTION', 'Deposits are detected automatically. Use Check status after sending.');
     if (['changenow', 'changelly', 'fixedfloat'].includes(swap.executable_quote?.provider)) {
       throw new ChangeNowError('CHANGENOW_AUTOMATIC_DETECTION', 'This provider detects deposits automatically. Use Check status after sending.');
     }

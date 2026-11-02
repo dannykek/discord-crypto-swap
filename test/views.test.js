@@ -452,6 +452,30 @@ describe('coin-first ticket component views', () => {
     expect(preview).not.toContain('~1 hour 1 minute');
   });
 
+  it('offers a cheaper backup from the preview and a way back from a backup preview', () => {
+    const ticket = { id: randomUUID(), step: 'PREVIEW', state_data: {} };
+    const base = {
+      origin_asset_id: assets[5].assetId, destination_asset_id: assets[6].assetId, amount_display: '1', amount_usd_requested: '100.00',
+      recipient: 'recipient', refund_to: 'refund', preview_expires_at: new Date(Date.now() + 60_000),
+    };
+    const quote = { amountIn: '100000000', amountInFormatted: '1', amountInUsd: '100', amountOut: '99000000', amountOutFormatted: '99', amountOutUsd: '99.70' };
+    const ids = payload => serialize(payload).components.flatMap(row => row.components.map(button => button.custom_id));
+
+    const main = renderTicket(ticket, catalogue, { ...base, dry_quote: { provider: 'relay', quoteRequest: { appFees: [] }, quote,
+      backupOffer: { amountOut: '99500000', amountOutFormatted: '99.5', cost: '0.40%' } } }, config, policy, emojis);
+    expect(JSON.stringify(serialize(main))).toContain('Cheaper with backup provider');
+    expect(JSON.stringify(serialize(main))).not.toContain('FixedFloat');
+    expect(ids(main)).toContain(`t:${ticket.id}:preview-backup`);
+
+    const plain = renderTicket(ticket, catalogue, { ...base, dry_quote: { provider: 'relay', quoteRequest: { appFees: [] }, quote } }, config, policy, emojis);
+    expect(ids(plain)).not.toContain(`t:${ticket.id}:preview-backup`);
+
+    const backup = renderTicket(ticket, catalogue, { ...base, dry_quote: { provider: 'fixedfloat', quoteRequest: { appFees: [], backupConsent: true }, quote,
+      backupOffer: { amountOut: '1', amountOutFormatted: '1', cost: '1%' } } }, config, policy, emojis);
+    expect(ids(backup)).toContain(`t:${ticket.id}:preview-main`);
+    expect(ids(backup)).not.toContain(`t:${ticket.id}:preview-backup`);
+  });
+
   it('uses a plain service fee for FixedFloat without extra provider disclaimers', () => {
     const ticket = { id: randomUUID(), step: 'PREVIEW', state_data: {} };
     const swap = {

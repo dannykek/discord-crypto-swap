@@ -9,6 +9,7 @@ const MESSAGES = Object.freeze({
   AMOUNT_TOO_HIGH: 'The amount is above the maximum available for this route. Enter a smaller amount and request a new preview.',
   NO_LIQUIDITY_ROUTE: 'No solvers are available for this swap right now. Try another network or token.',
   QUOTE_EXPIRED: 'The quote request expired before it could be completed. Request a fresh preview.',
+  QUOTE_TIMEOUT: 'Checking the route took too long. Send your refund address again to retry.',
   ONECLICK_AUTHENTICATION: 'The swap service is temporarily unavailable because its API credentials need attention.',
   ONECLICK_RATE_LIMITED: 'The swap service is receiving too many requests. Wait a moment and try again.',
   ONECLICK_NOT_FOUND: 'The deposit is not visible yet. If it was just sent, wait briefly and refresh.',
@@ -35,6 +36,9 @@ const ONECLICK_OPERATIONS = new Set([
 export function classifyOperationalError(error, { operation = 'request' } = {}) {
   if (error?.name === 'RelayError') {
     return result('relay', error.code, numericStatus(error), MESSAGES[error.code] ?? error.message, operation);
+  }
+  if (error?.name === 'ChainflipError') {
+    return result('chainflip', error.code, numericStatus(error), MESSAGES[error.code] ?? error.message, operation);
   }
   if (error?.name === 'FixedFloatError') {
     return result('fixedfloat', error.code, numericStatus(error), MESSAGES[error.code] ?? error.message, operation);

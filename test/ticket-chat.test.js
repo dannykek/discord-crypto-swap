@@ -457,7 +457,7 @@ describe('ticket chat input', () => {
     const result = await service.createPreviewFromChat('ticket', data, sourceMessage);
 
     expect(getFixedFloatIndicativeQuote).toHaveBeenCalledWith({ originAsset: origin, destinationAsset: destination, amountBase: '400000000' });
-    expect(result.userMessage).toBe("The amount is below the minimum available for this route. Current route minimum: $1,000.00. If you'd like, you can use our backup provider for this transaction.");
+    expect(result.userMessage).toBe("This amount is below our main providers' minimum ($1,000.00), but our backup provider can do this swap.");
     expect(result.userPayload.components[0].toJSON().components.map(button => button.custom_id)).toEqual([
       't:ticket:use-backup',
       't:ticket:watch-exact',
@@ -495,6 +495,83 @@ describe('ticket chat input', () => {
 
     expect(result.userMessage).toBe('The amount is below the minimum available for this route.');
     expect(result.userPayload).toEqual({ content: result.userMessage });
+  });
+
+  it('moves the ticket off the loading step even when reporting the failure fails', async () => {
+    const origin = { assetId: 'ltc', blockchain: 'ltc', symbol: 'LTC', decimals: 8 };
+    const destination = { assetId: 'usdt-bsc', blockchain: 'bsc', symbol: 'USDT', decimals: 18 };
+    const updateTicketFlowIfStep = vi.fn().mockResolvedValue({ id: 'ticket' });
+    const service = new TicketService({
+      client: {},
+      repositories: { updateTicketFlowIfStep, recordTicketError: vi.fn().mockRejectedValue(new Error('database hiccup')) },
+      catalogue: { getAsset: (id) => [origin, destination].find((asset) => asset.assetId === id) ?? null },
+      coinPolicy: { getAssetsForCoin: () => [] }, emojis: {},
+      oneClick: {
+        getVerifiedQuote: vi.fn().mockRejectedValue(new Error('offline')),
+        classifyError: vi.fn(() => { throw new Error('classifier bug'); }),
+        safeErrorLogFields: () => ({}),
+      },
+      config: {}, health: {}, logger: { warn: vi.fn() },
+    });
+    service.renderProgress = vi.fn();
+
+    await expect(service.createPreviewFromChat('ticket', {
+      originAssetId: origin.assetId, destinationAssetId: destination.assetId, amountBase: '1', recipient: 'r', refundTo: 'f',
+    }, null)).rejects.toThrow('classifier bug');
+    expect(updateTicketFlowIfStep).toHaveBeenCalledWith('ticket', 'QUOTE_LOADING', 'REFUND_ADDRESS', expect.any(Object));
+  });
+
+  it('shows both the main and backup minimums when the amount is below both', async () => {
+    const origin = { assetId: 'ltc', blockchain: 'ltc', symbol: 'LTC', decimals: 8 };
+    const destination = { assetId: 'usdt-bsc', blockchain: 'bsc', symbol: 'USDT', decimals: 18 };
+    const service = new TicketService({
+      client: {},
+      repositories: { updateTicketFlowIfStep: vi.fn().mockResolvedValue({ id: 'ticket' }), recordTicketError: vi.fn().mockResolvedValue(undefined) },
+      catalogue: { getAsset: (id) => [origin, destination].find((asset) => asset.assetId === id) ?? null },
+      coinPolicy: { getAssetsForCoin: () => [] }, emojis: {},
+      oneClick: {
+        getVerifiedQuote: vi.fn().mockRejectedValue(new Error('minimum is $1000')),
+        getFixedFloatOffer: vi.fn().mockResolvedValue({ quote: null, minimum: { amountFormatted: '0.2', amountUsd: '11.05' } }),
+        classifyError: () => ({ code: 'AMOUNT_TOO_LOW', status: 400, userMessage: 'too low', routeLimit: { kind: 'minimum', display: '$1,000.00' } }),
+        safeErrorLogFields: () => ({ errorCode: 'AMOUNT_TOO_LOW' }),
+      },
+      config: {}, health: {}, logger: { warn: vi.fn() },
+    });
+    service.renderProgress = vi.fn();
+
+    const result = await service.createPreviewFromChat('ticket', {
+      originAssetId: origin.assetId, destinationAssetId: destination.assetId,
+      amountBase: '1000000', amountDisplay: '0.01', amountUsdRequested: '0.55', recipient: 'recipient', refundTo: 'refund',
+    }, { reply: vi.fn().mockResolvedValue(undefined) });
+
+    expect(result.userMessage).toBe('The amount is below the minimum for this route.\nMain providers: minimum $1,000.00.\nBackup provider: minimum 0.2 LTC (≈$11.05).\nEnter a larger amount to continue.');
+    expect(result.userPayload.components).toBeUndefined();
+  });
+
+  it.each([['999', true], ['1000', false]])('offers the backup on a successful preview only when it pays more (%s vs 1000)', async (backupOut, offered) => {
+    const origin = { assetId: 'usdt-bsc', blockchain: 'bsc', symbol: 'USDT', decimals: 18 };
+    const destination = { assetId: 'sol', blockchain: 'sol', symbol: 'SOL', decimals: 9 };
+    const savePreview = vi.fn().mockResolvedValue({ id: 'preview' });
+    const service = new TicketService({
+      client: {},
+      repositories: { savePreview, updateTicketFlowIfStep: vi.fn().mockResolvedValue({ id: 'ticket' }), saveUserChainAddress: vi.fn().mockResolvedValue(undefined) },
+      catalogue: { getAsset: (id) => [origin, destination].find((asset) => asset.assetId === id) ?? null },
+      coinPolicy: { getAssetsForCoin: () => [] }, emojis: {},
+      oneClick: {
+        getVerifiedQuote: vi.fn().mockResolvedValue({ provider: 'relay', quote: { amountOut: backupOut === '999' ? '998' : '1000' } }),
+        getFixedFloatOffer: vi.fn().mockResolvedValue({ quote: { amountOut: '999', amountOutFormatted: '0.000000999', amountInUsd: '100', amountOutUsd: '99.5' }, minimum: null }),
+      },
+      config: { slippageBps: 50, previewTtlMs: 600000 }, health: {}, logger: { warn: vi.fn() },
+    });
+    service.renderProgress = vi.fn();
+
+    await service.createPreviewFromChat('ticket', {
+      originAssetId: origin.assetId, destinationAssetId: destination.assetId, amountBase: '100', amountDisplay: '100', recipient: 'recipient', refundTo: 'refund',
+    }, null);
+
+    const dryQuote = savePreview.mock.calls[0][0].dryQuote;
+    if (offered) expect(dryQuote.backupOffer).toMatchObject({ amountOut: '999', amountOutFormatted: '0.000000999' });
+    else expect(dryQuote.backupOffer).toBeUndefined();
   });
 
   it('does not offer the backup again when an already-selected backup has no route', async () => {

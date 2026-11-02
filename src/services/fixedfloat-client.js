@@ -44,31 +44,48 @@ export class FixedFloatClient {
   async canQuote({originAsset,destinationAsset,amountBase}) {
     return Boolean(await this.getIndicativeQuote({originAsset,destinationAsset,amountBase}));
   }
-  async getIndicativeQuote({originAsset,destinationAsset,amountBase}) {
-    if(!this.enabled)return false;
+  async getCurrencies() {
+    if(this.currencies&&Date.now()-this.currenciesAt<300_000)return this.currencies;
     const currencies=await this.request('ccies');if(!Array.isArray(currencies))invalid();
+    this.currencies=currencies;this.currenciesAt=Date.now();return currencies;
+  }
+  async getIndicativeQuote(parameters) {
+    if(!this.enabled)return false;
+    return (await this.getBackupOffer(parameters))?.quote??null;
+  }
+  // The live quote when FixedFloat can take this amount, otherwise its minimum when the amount is too small.
+  async getBackupOffer({originAsset,destinationAsset,amountBase}) {
+    if(!this.enabled)return null;
+    const currencies=await this.getCurrencies();
     const from=matchFixedFloatAsset(originAsset,currencies,'recv'),to=matchFixedFloatAsset(destinationAsset,currencies,'send');
     if(!from||!to||to.tag)return null;
     const amount=fromBaseUnits(amountBase,originAsset.decimals);
     const price=await this.request('price',{fromCcy:from.code,toCcy:to.code,amount,direction:'from',type:'float'});
     if(!Array.isArray(price.errors))invalid();
-    if(price.errors.length)return null;
     const data={fromCode:from.code,toCode:to.code,fromNetwork:from.network,toNetwork:to.network,fromCoin:from.coin,toCoin:to.coin};
+    if(price.errors.length){
+      if(!price.errors.includes('LIMIT_MIN'))return null;
+      validatePair(price,data);
+      let minimum;try{minimum=decimalToAtomic(price.from.min,originAsset.decimals);}catch{return null;}
+      if(BigInt(minimum)<=BigInt(amountBase))return null;
+      const minimumFormatted=fromBaseUnits(minimum,originAsset.decimals);
+      return {quote:null,minimum:{amountFormatted:minimumFormatted,amountUsd:usd(minimumFormatted,originAsset.price)}};
+    }
     validatePair(price,data);
     if(atomic(price.from.amount,originAsset.decimals)!==amountBase)return null;
     const amountOut=atomic(price.to.amount,destinationAsset.decimals);
     if(BigInt(amountOut)<=0n)return null;
-    return {
+    return {quote:{
       amountInUsd:usd(amount,originAsset.price),
       providerUsd: { amountInUsd: price.from.usd, amountOutUsd: price.to.usd },
       amountOut,
       amountOutFormatted:fromBaseUnits(amountOut,destinationAsset.decimals),
       amountOutUsd:usd(price.to.amount,destinationAsset.price),
-    };
+    },minimum:null};
   }
   async getQuote({dry,originAsset,destinationAsset,amountBase,recipient,refundTo,backupConsent}) {
     if(backupConsent!==true)throw new FixedFloatError('FIXEDFLOAT_CONSENT_REQUIRED','Choose the FixedFloat backup and review its live quote before continuing.');
-    const currencies=await this.request('ccies');if(!Array.isArray(currencies))invalid();
+    const currencies=await this.getCurrencies();
     const from=matchFixedFloatAsset(originAsset,currencies,'recv'),to=matchFixedFloatAsset(destinationAsset,currencies,'send');
     if(!from||!to)throw new FixedFloatError('NO_LIQUIDITY_ROUTE','FixedFloat does not support this exact asset and network pair.');
     if(to.tag)throw new FixedFloatError('FIXEDFLOAT_TAG_REQUIRED','This backup destination requires a memo/tag and is not supported by this flow.');
