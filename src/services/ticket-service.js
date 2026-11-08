@@ -2053,6 +2053,28 @@ export class TicketService {
     return this.centralTranscriptChannel;
   }
 
+  async assignClientRoleForCompletedSwap(swap) {
+    const roleId = this.config.clientRoleId;
+    if (!roleId || swap?.status !== 'SUCCESS' || !swap.executable_quote) return false;
+    const guildId = swap.guild_id ?? this.config.guildId;
+    if (!guildId || guildId !== this.config.guildId || !swap.user_id) return false;
+
+    try {
+      const guild = await this.client.guilds.fetch(guildId);
+      const member = await guild.members.fetch({ user: swap.user_id, force: true });
+      if (member.roles.cache.has(roleId)) return false;
+      await member.roles.add(roleId, 'Completed a crypto swap');
+      this.logger.info({ guildId, userId: swap.user_id, roleId }, 'Client role awarded for successful swap');
+      return true;
+    } catch (error) {
+      this.logger.warn({
+        guildId, userId: swap.user_id, roleId,
+        errorName: error.name, errorCode: error.code ?? null,
+      }, 'Could not award Client role for successful swap');
+      return false;
+    }
+  }
+
   async notifyCompletionVouch(swap) {
     const completedOrPayoutDetected = swap?.status === 'SUCCESS' || Boolean(swap?.payout_detected_at);
     if (!completedOrPayoutDetected || !swap.executable_quote) return false;

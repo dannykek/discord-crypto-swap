@@ -89,8 +89,18 @@ export class StatusWorker {
       if (result.swap && swap.guild_id && !result.swap.guild_id) {
         result.swap = { ...result.swap, guild_id: swap.guild_id };
       }
+      if (result.swap && swap.user_id && !result.swap.user_id) {
+        result.swap = { ...result.swap, user_id: swap.user_id };
+      }
       if (!['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap.executable_quote?.provider)) this.health.oneClickAuthentication = true;
       if (response.status === 'SUCCESS' && result.swap) {
+        try {
+          await this.ticketService.assignClientRoleForCompletedSwap?.(result.swap);
+        } catch (error) {
+          this.logger.warn({
+            swapId: swap.id, errorName: error.name, errorCode: 'CLIENT_ROLE_ASSIGNMENT_FAILED',
+          }, 'Client role assignment failed; swap processing will continue');
+        }
         await this.ticketService.publishCompletionSummary(result.swap);
         await this.ticketService.notifyCompletionVouch?.(result.swap);
       }

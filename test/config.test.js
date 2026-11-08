@@ -18,6 +18,7 @@ describe('configuration', () => {
     expect(config.completedDealsChannelId).toBe('123456789012345681');
     expect(config.transcriptChannelId).toBeNull();
     expect(config.vouchChannelId).toBeNull();
+    expect(config.clientRoleId).toBeNull();
     expect(config.centralTranscriptGuildId).toBeNull();
     expect(config.centralTranscriptChannelId).toBeNull();
     expect(config.fundingDeadlineMs).toBe(60 * 60_000);
@@ -43,6 +44,12 @@ describe('configuration', () => {
     const config = loadConfig({ ...validEnvironment, VOUCH_CHANNEL_ID: '1522362740415660113' });
     expect(config.vouchChannelId).toBe('1522362740415660113');
     expect(() => loadConfig({ ...validEnvironment, VOUCH_CHANNEL_ID: 'not-a-channel' })).toThrow('VOUCH_CHANNEL_ID');
+  });
+
+  it('validates the optional Client role ID', () => {
+    expect(loadConfig({ ...validEnvironment, CLIENT_ROLE_ID: '1565185132921618532' }).clientRoleId)
+      .toBe('1565185132921618532');
+    expect(() => loadConfig({ ...validEnvironment, CLIENT_ROLE_ID: 'not-a-role' })).toThrow('CLIENT_ROLE_ID');
   });
 
   it('validates the private transcript destination as a pair', () => {
