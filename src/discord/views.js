@@ -46,20 +46,37 @@ function safeCode(value) {
   return String(value ?? '').replaceAll('`', '\u02cb').replace(/[\r\n]/g, ' ').slice(0, 1000);
 }
 
-export function panelPayload(disabled = false) {
+export function panelPayload(disabled = false, { hasBanner = false } = {}) {
   const embed = new EmbedBuilder()
-    .setColor(Colors.Blurple)
-    .setTitle('Crypto-to-Crypto Swap')
-    .setDescription('Open a ticket to swap between supported coins in just a few minutes for a **0% service fee**.')
-    .addFields({
-      name: 'How it works',
-      value: 'Choose your coins and networks → enter an amount and wallet addresses → review the quote → deposit from your own wallet → track delivery.',
-    })
-    .setFooter({ text: 'One open swap ticket per member' });
+    .setColor(0x9892E8)
+    .setTitle('✦ Crypto Swap | Cross-Chain Exchange')
+    .setDescription(
+      '**Your gateway to crypto swaps across supported networks.**\n'
+      + 'Open a private ticket, compare a live quote, and track your exchange from deposit to delivery.',
+    )
+    .addFields(
+      {
+        name: '⚡ Simple swapping',
+        value: 'Choose your coins and networks. Review the expected output and quoted costs before committing.',
+      },
+      {
+        name: '🧭 How it works',
+        value: '**1.** Select a pair and enter an amount.\n'
+          + '**2.** Add your receiving and refund addresses.\n'
+          + '**3.** Review the quote, then deposit from your own wallet.\n'
+          + '**4.** Follow live updates in your private ticket.',
+      },
+      {
+        name: '🔐 Trade with care',
+        value: 'Never share a seed phrase or private key. Network and provider fees may apply; some providers may require verification.',
+      },
+    )
+    .setFooter({ text: 'Up to 3 active tickets per member • Always verify the network and deposit address' });
+  if (hasBanner) embed.setImage('attachment://swap-banner.jpg');
 
   const startButton = new ButtonBuilder()
     .setCustomId('panel:start')
-    .setLabel(disabled ? 'Temporarily unavailable' : 'Start swap')
+    .setLabel(disabled ? 'Temporarily unavailable' : 'Start Swap')
     .setEmoji('🔄')
     .setStyle(ButtonStyle.Primary)
     .setDisabled(disabled);
