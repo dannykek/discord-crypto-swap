@@ -61,6 +61,14 @@ NEAR Intents 1Click has no testnet. Do not use a meaningful mainnet amount until
 
 The bot creates channel-specific overwrites denying `@everyone` and allowing only the ticket owner and bot. A Discord member with Administrator permission can still view or override any guild channel.
 
+## Swap panel branding
+
+The public Discord panel uses a lavender-accented embed with the existing **Start Swap** and **Supported Coins** buttons. To display the original banner **without altering or recompressing it**, upload the supplied JPG to this exact repository path:
+
+`src/assets/panel/swap-banner.jpg`
+
+The bot attaches those original JPG bytes directly to the existing panel message when it starts. If the file is missing, the panel stays functional without an image and logs a warning. Once the file is present, the next deployment updates the existing panel in place rather than posting duplicates. Ensure the bot has **Attach Files** permission in the panel channel.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and fill in all required values:
