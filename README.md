@@ -85,7 +85,9 @@ BOT_FEE_RECIPIENT=
 
 Never paste either token into Discord or commit `.env`. Keep the transcript channel restricted: its text files intentionally contain full ticket messages, wallet addresses, deposit instructions, memos, and transaction values. The quote made with the member's real addresses is authoritative. Standard quotes expire after 30 minutes; BTC-family origins use 90 minutes. See `.env.example` for every operational setting.
 
-For a single Discord server, set `DISCORD_GUILD_ID`, `PANEL_CHANNEL_ID`, `TICKET_CATEGORY_ID`, `COMPLETED_DEALS_CHANNEL_ID`, `TRANSCRIPT_CHANNEL_ID`, and `VOUCH_CHANNEL_ID` through your Railway service variables. No Discord `/setup` wizard is needed.\n\nThe single-server Discord location variables configure one server. To run the same bot identity in any number of servers, replace those location variables with one `DISCORD_GUILDS_JSON` array:
+For a single Discord server, set `DISCORD_GUILD_ID`, `PANEL_CHANNEL_ID`, `TICKET_CATEGORY_ID`, `COMPLETED_DEALS_CHANNEL_ID`, `TRANSCRIPT_CHANNEL_ID`, and `VOUCH_CHANNEL_ID` through your Railway service variables. No Discord `/setup` wizard is needed.
+
+The single-server Discord location variables configure one server. To run the same bot identity in any number of servers, replace those location variables with one `DISCORD_GUILDS_JSON` array:
 
 ```dotenv
 DISCORD_GUILDS_JSON=[{"guildId":"111111111111111111","panelChannelId":"111111111111111112","ticketCategoryId":"111111111111111113","completedDealsChannelId":"111111111111111114","transcriptChannelId":"111111111111111115","vouchChannelId":null},{"guildId":"222222222222222221","panelChannelId":"222222222222222222","ticketCategoryId":"222222222222222223","completedDealsChannelId":"222222222222222224","transcriptChannelId":"222222222222222225","vouchChannelId":"222222222222222226"}]
