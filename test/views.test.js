@@ -45,27 +45,32 @@ function serialize(payload) {
 }
 
 describe('coin-first ticket component views', () => {
-  it('renders the exact swap panel copy and keeps supported coins enabled during an outage', () => {
-    const available = serialize(panelPayload());
+  it('renders the refreshed swap panel, preserves buttons, and shows the original banner when supplied', () => {
+    const available = serialize(panelPayload(false, { hasBanner: true }));
     expect(available.embeds[0]).toMatchObject({
-      title: 'Crypto-to-Crypto Swap',
-      description: 'Open a ticket to swap between supported coins in just a few minutes for a **0% service fee**.',
-      fields: [{
-        name: 'How it works',
-        value: 'Choose your coins and networks → enter an amount and wallet addresses → review the quote → deposit from your own wallet → track delivery.',
-      }],
-      footer: { text: 'One open swap ticket per member' },
+      title: '✦ Crypto Swap | Cross-Chain Exchange',
+      image: { url: 'attachment://swap-banner.jpg' },
     });
+    expect(available.embeds[0].description).toContain('Open a private ticket');
+    expect(available.embeds[0].fields.map((field) => field.name)).toEqual([
+      '⚡ Simple swapping',
+      '🧭 How it works',
+      '🔐 Trade with care',
+    ]);
+    expect(available.embeds[0].footer.text).toContain('3 active tickets');
     expect(available.components[0].components.map((button) => button.custom_id)).toEqual([
       'panel:start',
       'panel:supported-coins',
     ]);
     expect(available.components[0].components.map((button) => button.label)).toEqual([
-      'Start swap',
+      'Start Swap',
       'Supported Coins',
     ]);
 
-    const disabled = serialize(panelPayload(true));
+    const withoutBanner = serialize(panelPayload());
+    expect(withoutBanner.embeds[0].image).toBeUndefined();
+
+    const disabled = serialize(panelPayload(true, { hasBanner: true }));
     expect(disabled.components[0].components[0]).toMatchObject({ disabled: true, label: 'Temporarily unavailable' });
     expect(disabled.components[0].components[1].disabled).not.toBe(true);
   });
