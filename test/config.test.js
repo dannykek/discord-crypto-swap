@@ -19,6 +19,7 @@ describe('configuration', () => {
     expect(config.transcriptChannelId).toBeNull();
     expect(config.vouchChannelId).toBeNull();
     expect(config.clientRoleId).toBeNull();
+    expect(config.ticketOwnerIds).toEqual([]);
     expect(config.centralTranscriptGuildId).toBeNull();
     expect(config.centralTranscriptChannelId).toBeNull();
     expect(config.fundingDeadlineMs).toBe(60 * 60_000);
@@ -50,6 +51,17 @@ describe('configuration', () => {
     expect(loadConfig({ ...validEnvironment, CLIENT_ROLE_ID: '1565185132921618532' }).clientRoleId)
       .toBe('1565185132921618532');
     expect(() => loadConfig({ ...validEnvironment, CLIENT_ROLE_ID: 'not-a-role' })).toThrow('CLIENT_ROLE_ID');
+  });
+
+  it('accepts comma-separated authorized ticket owner user IDs', () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      TICKET_OWNER_IDS: '1412664174042943518, 807314019684712468,807312682637197353',
+    });
+    expect(config.ticketOwnerIds).toEqual([
+      '1412664174042943518', '807314019684712468', '807312682637197353',
+    ]);
+    expect(() => loadConfig({ ...validEnvironment, TICKET_OWNER_IDS: 'bad-user-id' })).toThrow('TICKET_OWNER_IDS');
   });
 
   it('validates the private transcript destination as a pair', () => {

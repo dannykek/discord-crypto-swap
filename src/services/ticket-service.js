@@ -7,6 +7,7 @@ import {
   ButtonStyle,
   ChannelType,
   MessageFlags,
+  OverwriteType,
   PermissionFlagsBits,
 } from 'discord.js';
 import {
@@ -527,7 +528,11 @@ export class TicketService {
       await this.privateReply(interaction, 'This control belongs to a different server.');
       return true;
     }
-    if (ticket.user_id !== interaction.user.id) {
+    const isTicketOwner = ticket.user_id === interaction.user.id;
+    const isAuthorizedServerOwnerClosing = (this.config.ticketOwnerIds ?? []).includes(interaction.user.id)
+      && interaction.isButton?.()
+      && ['close', 'close-confirm', 'close-cancel'].includes(parsed.action);
+    if (!isTicketOwner && !isAuthorizedServerOwnerClosing) {
       await this.privateReply(interaction, 'Only the member who opened this ticket can use its controls.');
       return true;
     }
@@ -651,6 +656,13 @@ export class TicketService {
               PermissionFlagsBits.AttachFiles,
             ],
           },
+          ...(this.config.ticketOwnerIds ?? [])
+            .filter((id) => id !== interaction.user.id)
+            .map((id) => ({
+              id,
+              type: OverwriteType.Member,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+            })),
         ],
         reason: `Private swap ticket for Discord user ${interaction.user.id}`,
       });
@@ -1704,6 +1716,7 @@ export class TicketService {
       try {
         if (this.guildConfigs.size > 0 && !this.guildConfigs.has(ticket.guild_id)) continue;
         if (!ticket.channel_id) continue;
+        await this.ensureOwnerTicketAccess(ticket);
         await this.ensureTicketHeader(ticket);
         await this.removeLegacyTicketFooters(ticket);
         if (ticket.step === 'TERMINAL' && ticket.delete_at) await this.makeTerminalTicketActionable(ticket);
@@ -1728,6 +1741,30 @@ export class TicketService {
       }
     }
     this.logger.info({ reconciledTicketCount: reconciled }, 'Open Discord tickets reconciled');
+  }
+
+  async ensureOwnerTicketAccess(ticket) {
+    const ownerIds = (this.config.ticketOwnerIds ?? []).filter((id) => id !== ticket.user_id);
+    if (!ownerIds.length || ticket.guild_id !== this.config.guildId || !ticket.channel_id) return;
+
+    const channel = await this.client.channels.fetch(ticket.channel_id).catch(() => null);
+    if (!channel || channel.type !== ChannelType.GuildText || !channel.permissionOverwrites?.edit) return;
+
+    for (const id of ownerIds) {
+      const overwrite = channel.permissionOverwrites.cache?.get(id);
+      if (overwrite?.allow?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory])) continue;
+      try {
+        await channel.permissionOverwrites.edit(id, {
+          ViewChannel: true,
+          ReadMessageHistory: true,
+        }, { reason: 'Permit authorized server owners to close swap tickets' });
+      } catch (error) {
+        this.logger.warn({
+          ticketId: ticket.id, ownerId: id, errorCode: error.code ?? null,
+          errorName: error.name,
+        }, 'Could not grant server owner access to existing ticket');
+      }
+    }
   }
 
   async ensureTicketHeader(ticket) {

@@ -149,6 +149,7 @@ describe('multi-guild bot runtime', () => {
       touchTicket: vi.fn(),
     };
     const service = makeService({ runtimes: [second], repositories });
+    service.config.ticketOwnerIds = ['1412664174042943518', '807314019684712468', '807312682637197353'];
     const start = {
       customId: 'panel:start',
       guildId: guildConfigs[1].guildId,
@@ -163,6 +164,14 @@ describe('multi-guild bot runtime', () => {
 
     expect(second.guild.channels.create).toHaveBeenCalledWith(expect.objectContaining({
       parent: guildConfigs[1].ticketCategoryId,
+      permissionOverwrites: expect.arrayContaining([
+        expect.objectContaining({
+          id: '1412664174042943518',
+          type: 1,
+        }),
+        expect.objectContaining({ id: '807314019684712468', type: 1 }),
+        expect.objectContaining({ id: '807312682637197353', type: 1 }),
+      ]),
     }));
     expect(repositories.reserveTicket).toHaveBeenCalledWith(expect.objectContaining({
       guildId: guildConfigs[1].guildId,

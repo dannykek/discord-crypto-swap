@@ -19,6 +19,10 @@ const optionalNonEmptyString = z.preprocess(
 const optionalUrl = optionalNonEmptyString.pipe(z.url().optional());
 const discordId = z.string().trim().regex(/^\d+$/);
 const optionalDiscordId = optionalNonEmptyString.pipe(discordId.optional());
+const ticketOwnerIds = z.string().default('').refine(
+  (value) => !value.trim() || value.split(',').every((id) => /^\d{17,20}$/.test(id.trim())),
+  { message: 'must be comma-separated Discord user IDs' },
+).transform((value) => [...new Set(value.split(',').map((id) => id.trim()).filter(Boolean))]);
 
 const guildConfigurationSchema = z.object({
   guildId: discordId,
@@ -44,6 +48,7 @@ const schema = z.object({
   TRANSCRIPT_CHANNEL_ID: optionalDiscordId,
   VOUCH_CHANNEL_ID: optionalDiscordId,
   CLIENT_ROLE_ID: optionalDiscordId,
+  TICKET_OWNER_IDS: ticketOwnerIds,
   CENTRAL_TRANSCRIPT_GUILD_ID: optionalDiscordId,
   CENTRAL_TRANSCRIPT_CHANNEL_ID: optionalDiscordId,
   ONECLICK_JWT: z.string().min(20),
@@ -187,6 +192,7 @@ export function loadConfig(environment = process.env) {
     transcriptChannelId: primaryGuild.transcriptChannelId,
     vouchChannelId: primaryGuild.vouchChannelId,
     clientRoleId: env.CLIENT_ROLE_ID ?? null,
+    ticketOwnerIds: env.TICKET_OWNER_IDS,
     centralTranscriptGuildId: env.CENTRAL_TRANSCRIPT_GUILD_ID ?? null,
     centralTranscriptChannelId: env.CENTRAL_TRANSCRIPT_CHANNEL_ID ?? null,
     oneClickJwt: env.ONECLICK_JWT,
