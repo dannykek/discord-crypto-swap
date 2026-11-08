@@ -2,13 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
   ActionRowBuilder,
-  ApplicationIntegrationType,
   ApplicationCommandOptionType,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
   MessageFlags,
-  InteractionContextType,
   PermissionFlagsBits,
 } from 'discord.js';
 import {
@@ -41,25 +39,16 @@ import { networkLabel, OTHER_COIN_KEY } from './coin-policy.js';
 import { getPopularSwap } from './popular-swaps.js';
 import { buildTranscriptFiles, fetchAllChannelMessages } from './transcript-service.js';
 import { validateKnownAddressFormat } from '../utils/address-validation.js';
-import {
-  GUILD_SETUP_STEPS,
-  parseSetupComponentId,
-  setupRedoConfirmationPayload,
-  setupReviewPayload,
-  setupSavedPayload,
-  setupStepPayload,
-} from '../discord/setup-wizard.js';
 
 const MAX_PRICE_AGE_MS = 30 * 60 * 1000;
 const MAX_ACTIVE_TICKETS_PER_USER = 3;
-const STALE_APPLICATION_COMMAND_NAMES = Object.freeze(['mutuals']);
+const STALE_APPLICATION_COMMAND_NAMES = Object.freeze(['mutuals', 'setup']);
 const ROUTE_CHECK_COOLDOWN_MS = 30_000;
 const MAX_ALTERNATIVE_ROUTE_CANDIDATES = 6;
 const MAX_ALTERNATIVE_ROUTE_RESULTS = 2;
 const ALTERNATIVE_ROUTE_CONCURRENCY = 3;
 const ROUTE_BRIDGE_COINS = Object.freeze(['USDC', 'USDT', 'SOL', 'ETH', 'BNB']);
 const POPULAR_ROUTE_PROBE_USD = '100';
-const SETUP_SESSION_TTL_MS = 15 * 60_000;
 // Unknown channel/guild, missing access or permissions: retrying cannot succeed.
 const PERMANENT_DISCORD_CHANNEL_ERRORS = new Set([10003, 10004, 50001, 50013]);
 const POPULAR_ROUTE_PROBE_ADDRESSES = Object.freeze({
@@ -91,20 +80,11 @@ export class TicketService {
     this.completionGif = null;
     this.routeChecks = new Set();
     this.routeCheckCooldowns = new Map();
-    this.setupSessions = new Map();
     this.centralTranscriptChannel = null;
   }
 
   setStatusWorker(statusWorker) {
     this.statusWorker = statusWorker;
-  }
-
-  async initializeGuildConfigurations() {
-    if (!this.config.selfServiceSetupEnabled) return;
-    await this.repositories.seedGuildConfigurations([...this.guildConfigs.values()]);
-    const stored = await this.repositories.listGuildConfigurations();
-    this.guildConfigs = new Map(stored.map((guild) => [guild.guildId, guild]));
-    this.logger.info({ guildCount: this.guildConfigs.size }, 'Persistent Discord guild configurations loaded');
   }
 
   async handleMessage(message) {
@@ -299,7 +279,6 @@ export class TicketService {
       ? await this.client.application.commands.fetch()
       : null;
     await this.removeStaleCommands(globalCommands, {});
-    await this.syncSetupCommand(globalCommands);
     for (const guildConfig of this.guildConfigs.values()) {
       const guild = await this.client.guilds.fetch(guildConfig.guildId).catch(() => null);
       if (!guild) {
@@ -308,27 +287,6 @@ export class TicketService {
       }
       await this.initializeGuildCommands(guild, guildDefinitions);
     }
-  }
-
-  async syncSetupCommand(globalCommands) {
-    if (typeof globalCommands?.find !== 'function') return;
-    const existing = globalCommands.find((command) => command.name === 'setup');
-    if (!this.config.selfServiceSetupEnabled) {
-      if (existing) await existing.delete();
-      return;
-    }
-    const definition = {
-      name: 'setup',
-      description: 'Configure the swap bot for this server',
-      defaultMemberPermissions: PermissionFlagsBits.Administrator.toString(),
-      integrationTypes: [ApplicationIntegrationType.GuildInstall],
-      contexts: [InteractionContextType.Guild],
-    };
-    if (existing) await existing.edit(definition);
-    else if (typeof this.client.application?.commands?.create === 'function') {
-      await this.client.application.commands.create(definition);
-    }
-    this.logger.info({ commandName: definition.name }, 'Global setup command is ready');
   }
 
   async initializeGuildCommands(guild, definitions = null) {
@@ -516,10 +474,6 @@ export class TicketService {
 
   async handleInteraction(interaction) {
     if (interaction.isChatInputCommand?.()) {
-      if (interaction.commandName === 'setup') {
-        await this.handleSetupCommand(interaction);
-        return true;
-      }
       if (interaction.commandName === 'stats') {
         await this.handleStatsCommand(interaction);
         return true;
@@ -529,10 +483,6 @@ export class TicketService {
         return true;
       }
       return false;
-    }
-    if ('customId' in interaction && interaction.customId.startsWith('setup:')) {
-      await this.handleSetupInteraction(interaction);
-      return true;
     }
     if (interaction.isButton() && interaction.customId === 'panel:start') {
       await this.startTicket(interaction);
@@ -585,252 +535,6 @@ export class TicketService {
       await this.privateReply(interaction, error instanceof UserInputError ? error.message : this.oneClick.userMessage(error, { operation: 'ticket_interaction' }));
     }
     return true;
-  }
-
-  async handleSetupCommand(interaction) {
-    if (!this.config.selfServiceSetupEnabled) {
-      await this.privateReply(interaction, 'Self-service setup is not enabled for this bot.');
-      return;
-    }
-    if (!interaction.guildId || !interaction.guild) {
-      await this.privateReply(interaction, 'Run this command inside the server you want to configure.');
-      return;
-    }
-    if (!interaction.memberPermissions?.has?.(PermissionFlagsBits.Administrator)) {
-      await this.privateReply(interaction, 'Only a server administrator can configure the bot.');
-      return;
-    }
-
-    this.removeExpiredSetupSessions();
-    const sessionId = randomUUID();
-    const existing = this.guildConfigs.get(interaction.guildId)
-      ?? await this.repositories.getGuildConfiguration(interaction.guildId);
-    const session = {
-      id: sessionId,
-      guildId: interaction.guildId,
-      userId: interaction.user.id,
-      stepIndex: 0,
-      values: {},
-      confirmed: !existing,
-      expiresAt: Date.now() + SETUP_SESSION_TTL_MS,
-    };
-    this.setupSessions.set(sessionId, session);
-    await interaction.reply({
-      ...(existing
-        ? setupRedoConfirmationPayload(sessionId)
-        : setupStepPayload(sessionId, 0, session.values)),
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  async handleSetupInteraction(interaction) {
-    const parsed = parseSetupComponentId(interaction.customId);
-    const session = parsed ? this.setupSessions.get(parsed.sessionId) : null;
-    if (!parsed || !session || session.expiresAt <= Date.now()) {
-      if (session) this.setupSessions.delete(session.id);
-      await this.privateReply(interaction, 'This setup session expired. Run /setup again.');
-      return;
-    }
-    if (interaction.guildId !== session.guildId || interaction.user.id !== session.userId) {
-      await this.privateReply(interaction, 'Only the administrator who started this setup can use these controls.');
-      return;
-    }
-    if (!interaction.memberPermissions?.has?.(PermissionFlagsBits.Administrator)) {
-      this.setupSessions.delete(session.id);
-      await this.privateReply(interaction, 'You must still be a server administrator to finish setup.');
-      return;
-    }
-    session.expiresAt = Date.now() + SETUP_SESSION_TTL_MS;
-
-    if (parsed.action === 'cancel') {
-      this.setupSessions.delete(session.id);
-      await interaction.update({
-        content: 'Setup cancelled. The existing server configuration was not changed.',
-        components: [],
-        allowedMentions: { parse: [] },
-      });
-      return;
-    }
-    if (parsed.action === 'redo') {
-      session.confirmed = true;
-      session.stepIndex = 0;
-      session.values = {};
-      await interaction.update(setupStepPayload(session.id, session.stepIndex, session.values));
-      return;
-    }
-    if (!session.confirmed) {
-      await this.privateReply(interaction, 'Confirm that you want to redo setup before changing anything.');
-      return;
-    }
-    if (parsed.action === 'back') {
-      session.stepIndex = Math.max(0, Math.min(GUILD_SETUP_STEPS.length - 1, session.stepIndex - 1));
-      await interaction.update(setupStepPayload(session.id, session.stepIndex, session.values));
-      return;
-    }
-    if (parsed.action === 'none') {
-      const step = GUILD_SETUP_STEPS[session.stepIndex];
-      if (!step?.optional) {
-        await this.privateReply(interaction, 'This setup choice is required.');
-        return;
-      }
-      session.values[step.key] = null;
-      session.stepIndex += 1;
-      await interaction.update(this.nextSetupPayload(session));
-      return;
-    }
-    if (parsed.action === 'select') {
-      const step = GUILD_SETUP_STEPS[session.stepIndex];
-      const channelId = interaction.values?.[0];
-      if (!step || !channelId) {
-        await this.privateReply(interaction, 'Select one channel to continue.');
-        return;
-      }
-      session.values[step.key] = channelId;
-      session.stepIndex += 1;
-      await interaction.update(this.nextSetupPayload(session));
-      return;
-    }
-    if (parsed.action !== 'save' || session.stepIndex < GUILD_SETUP_STEPS.length) {
-      await this.privateReply(interaction, 'That setup control is no longer valid.');
-      return;
-    }
-
-    await interaction.deferUpdate();
-    try {
-      const saved = await this.applyGuildSetup(interaction.guild, session.values, interaction.user.id);
-      this.setupSessions.delete(session.id);
-      await interaction.editReply(setupSavedPayload(saved));
-    } catch (error) {
-      this.logger.warn({
-        guildId: interaction.guildId,
-        userId: interaction.user.id,
-        errorName: error.name,
-        operation: 'guild_setup',
-      }, 'Guild setup could not be saved');
-      await interaction.editReply({
-        content: error instanceof UserInputError
-          ? error.message
-          : 'Setup could not be saved. Check the selected channels and the bot permissions, then try again.',
-        components: setupReviewPayload(session.id, session.values).components,
-        allowedMentions: { parse: [] },
-      });
-    }
-  }
-
-  nextSetupPayload(session) {
-    return session.stepIndex < GUILD_SETUP_STEPS.length
-      ? setupStepPayload(session.id, session.stepIndex, session.values)
-      : setupReviewPayload(session.id, session.values);
-  }
-
-  removeExpiredSetupSessions() {
-    const now = Date.now();
-    for (const [sessionId, session] of this.setupSessions) {
-      if (session.expiresAt <= now) this.setupSessions.delete(sessionId);
-    }
-  }
-
-  async applyGuildSetup(guild, values, configuredByUserId) {
-    const configuration = await this.validateGuildSetup(guild, values, configuredByUserId);
-    const previousPanel = await this.repositories.getPanel(guild.id);
-    const saved = await this.repositories.upsertGuildConfiguration(configuration);
-    this.guildConfigs.set(guild.id, saved);
-    this.completionChannels.delete(guild.id);
-    this.transcriptChannels.delete(guild.id);
-
-    if (saved.completedDealsChannelId) await this.initializeGuildCompletionChannel(saved, guild);
-    if (saved.transcriptChannelId) await this.initializeGuildTranscriptChannel(saved);
-    await this.initializeGuildPanel(saved, guild);
-    await this.initializeGuildCommands(guild).catch((error) => {
-      this.logger.warn({ guildId: guild.id, errorName: error.name }, 'Guild stats commands could not be initialized after setup');
-    });
-
-    if (previousPanel && previousPanel.channel_id !== saved.panelChannelId) {
-      const oldChannel = await this.client.channels.fetch(previousPanel.channel_id).catch(() => null);
-      const oldMessage = oldChannel?.messages?.fetch
-        ? await oldChannel.messages.fetch(previousPanel.message_id).catch(() => null)
-        : null;
-      if (oldMessage?.delete) await oldMessage.delete().catch(() => null);
-    }
-    this.logger.info({ guildId: guild.id, configuredByUserId }, 'Guild setup saved');
-    return saved;
-  }
-
-  async validateGuildSetup(guild, values, configuredByUserId) {
-    if (!values.panelChannelId || !values.ticketCategoryId) {
-      throw new UserInputError('The swap panel channel and ticket category are required.');
-    }
-    const member = guild.members?.me ?? await guild.members?.fetchMe?.();
-    if (!member?.permissions?.has?.(PermissionFlagsBits.ManageChannels)) {
-      throw new UserInputError('The bot needs Manage Channels before setup can be saved.');
-    }
-
-    const requirements = {
-      panelChannelId: {
-        types: [ChannelType.GuildText],
-        permissions: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.EmbedLinks,
-          PermissionFlagsBits.ReadMessageHistory,
-        ],
-        permissionNames: 'View Channel, Send Messages, Embed Links, and Read Message History',
-      },
-      ticketCategoryId: {
-        types: [ChannelType.GuildCategory],
-        permissions: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ManageChannels],
-        permissionNames: 'View Channel and Manage Channels',
-      },
-      completedDealsChannelId: {
-        types: [ChannelType.GuildText, ChannelType.GuildAnnouncement],
-        permissions: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.EmbedLinks,
-          PermissionFlagsBits.AttachFiles,
-          PermissionFlagsBits.ReadMessageHistory,
-        ],
-        permissionNames: 'View Channel, Send Messages, Embed Links, Attach Files, and Read Message History',
-      },
-      transcriptChannelId: {
-        types: [ChannelType.GuildText, ChannelType.GuildAnnouncement],
-        permissions: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.AttachFiles,
-          PermissionFlagsBits.ReadMessageHistory,
-        ],
-        permissionNames: 'View Channel, Send Messages, Attach Files, and Read Message History',
-      },
-      vouchChannelId: {
-        types: [ChannelType.GuildText, ChannelType.GuildAnnouncement],
-        permissions: [PermissionFlagsBits.ViewChannel],
-        permissionNames: 'View Channel',
-      },
-    };
-
-    for (const [key, requirement] of Object.entries(requirements)) {
-      const channelId = values[key];
-      if (!channelId) continue;
-      const channel = await guild.channels.fetch(channelId).catch(() => null);
-      const label = GUILD_SETUP_STEPS.find((step) => step.key === key)?.label ?? 'Selected channel';
-      if (!channel || channel.guildId !== guild.id || !requirement.types.includes(channel.type)) {
-        throw new UserInputError(`${label} must be a valid channel in this server.`);
-      }
-      if (!channel.permissionsFor?.(member)?.has?.(requirement.permissions)) {
-        throw new UserInputError(`The bot needs ${requirement.permissionNames} in ${label}.`);
-      }
-    }
-
-    return {
-      guildId: guild.id,
-      panelChannelId: values.panelChannelId,
-      ticketCategoryId: values.ticketCategoryId,
-      completedDealsChannelId: values.completedDealsChannelId ?? null,
-      transcriptChannelId: values.transcriptChannelId ?? null,
-      vouchChannelId: values.vouchChannelId ?? null,
-      configuredByUserId,
-    };
   }
 
   async handleStatsCommand(interaction) {

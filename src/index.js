@@ -102,7 +102,6 @@ try {
   health.discord = true;
 
   await emojis.initialize();
-  await ticketService.initializeGuildConfigurations();
   logger.info({ botUserId: client.user.id, guildCount: ticketService.guildConfigs.size }, 'Discord client ready');
   await ticketService.initializeCommands();
   await ticketService.initializeCompletionChannel();

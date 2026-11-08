@@ -18,7 +18,6 @@ describe('configuration', () => {
     expect(config.completedDealsChannelId).toBe('123456789012345681');
     expect(config.transcriptChannelId).toBeNull();
     expect(config.vouchChannelId).toBeNull();
-    expect(config.selfServiceSetupEnabled).toBe(false);
     expect(config.centralTranscriptGuildId).toBeNull();
     expect(config.centralTranscriptChannelId).toBeNull();
     expect(config.fundingDeadlineMs).toBe(60 * 60_000);
@@ -46,14 +45,12 @@ describe('configuration', () => {
     expect(() => loadConfig({ ...validEnvironment, VOUCH_CHANNEL_ID: 'not-a-channel' })).toThrow('VOUCH_CHANNEL_ID');
   });
 
-  it('enables self-service setup and validates the private transcript destination as a pair', () => {
+  it('validates the private transcript destination as a pair', () => {
     const config = loadConfig({
       ...validEnvironment,
-      SELF_SERVICE_SETUP_ENABLED: 'true',
       CENTRAL_TRANSCRIPT_GUILD_ID: '1511062369176911973',
       CENTRAL_TRANSCRIPT_CHANNEL_ID: '1511062869255651570',
     });
-    expect(config.selfServiceSetupEnabled).toBe(true);
     expect(config.centralTranscriptGuildId).toBe('1511062369176911973');
     expect(config.centralTranscriptChannelId).toBe('1511062869255651570');
     expect(() => loadConfig({
