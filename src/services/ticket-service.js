@@ -349,10 +349,24 @@ export class TicketService {
       if (isSwapPanelMessage(fetched, this.client.user.id)) savedMessage = fetched;
     }
 
+    // The original, unmodified user banner is committed separately under src/assets/panel/.
+    // Until it exists, keep the panel functional instead of failing bot startup.
+    let banner = null;
+    try {
+      banner = await readFile(new URL('../assets/panel/swap-banner.jpg', import.meta.url));
+    } catch (error) {
+      this.logger.warn({ errorName: error.name }, 'Swap panel banner unavailable; showing the text panel until the original JPG is uploaded');
+    }
+
     let message = savedMessage ?? candidates[0] ?? null;
-    const payload = { ...panelPayload(!this.health.isReady()), allowedMentions: { parse: [] } };
+    const payload = {
+      ...panelPayload(!this.health.isReady(), { hasBanner: Boolean(banner) }),
+      ...(banner ? { files: [{ attachment: banner, name: 'swap-banner.jpg', description: 'Original Crypto Swap banner' }] } : {}),
+      allowedMentions: { parse: [] },
+    };
     if (message) {
-      await message.edit(payload);
+      // Replace old panel attachments while keeping the same message and working buttons.
+      await message.edit({ ...payload, attachments: [] });
     } else {
       message = await panelChannel.send(payload);
     }
