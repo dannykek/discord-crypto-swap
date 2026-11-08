@@ -1,6 +1,6 @@
 # Discord swap bot
 
-A non-custodial Discord bot that opens a private ticket for each swap and uses a signed quote provider for settlement tracking. Members interact through a public **Start swap** button, private ticket dropdowns, buttons, and ordinary ticket messages. There are no user-facing slash commands or modals.
+A non-custodial Discord bot that opens a private ticket for each swap and uses a signed quote provider for settlement tracking. Members interact through a public **Start swap** button, private ticket dropdowns, buttons, and ordinary ticket messages. Swaps are button-based; `/stats` and `/leaderboard` provide server statistics. There is no `/setup` command or swap modal.
 
 When `RELAY_API_KEY` is configured, previews race NEAR Intents against Relay deposit-address quotes and choose the highest net destination-token amount (all provider costs included). Ties prefer NEAR. Confirmation creates instructions only with the selected provider; it never silently changes providers. Unsupported Relay assets and operational failures leave NEAR available. Existing fallback providers keep their current policy.
 
@@ -32,7 +32,6 @@ The bot never signs wallet transactions, requests seed phrases, or takes custody
 - Pings the owner when a swap reaches a final state and deletes the completed ticket after a five-minute grace period unless the owner closes it first.
 - Warns unfinished tickets after five inactive minutes, closes them immediately at 30 minutes, and DMs the owner after closure.
 - Archives full plain-text transcripts for final swaps in a restricted administrative channel before deleting their ticket channels.
-- Optionally exposes an administrator-only `/setup` wizard that configures additional servers with Discord channel selectors and stores their settings in PostgreSQL.
 
 ## Prerequisites
 
@@ -75,7 +74,6 @@ TICKET_CATEGORY_ID=your-private-category-id
 COMPLETED_DEALS_CHANNEL_ID=your-completed-deals-channel-id
 TRANSCRIPT_CHANNEL_ID=your-private-transcript-channel-id
 VOUCH_CHANNEL_ID=
-SELF_SERVICE_SETUP_ENABLED=false
 CENTRAL_TRANSCRIPT_GUILD_ID=
 CENTRAL_TRANSCRIPT_CHANNEL_ID=
 ONECLICK_JWT=your-1click-partner-jwt
@@ -87,7 +85,7 @@ BOT_FEE_RECIPIENT=
 
 Never paste either token into Discord or commit `.env`. Keep the transcript channel restricted: its text files intentionally contain full ticket messages, wallet addresses, deposit instructions, memos, and transaction values. The quote made with the member's real addresses is authoritative. Standard quotes expire after 30 minutes; BTC-family origins use 90 minutes. See `.env.example` for every operational setting.
 
-The legacy Discord location variables configure one server. To run the same bot identity in any number of servers, replace those location variables with one `DISCORD_GUILDS_JSON` array:
+For a single Discord server, set `DISCORD_GUILD_ID`, `PANEL_CHANNEL_ID`, `TICKET_CATEGORY_ID`, `COMPLETED_DEALS_CHANNEL_ID`, `TRANSCRIPT_CHANNEL_ID`, and `VOUCH_CHANNEL_ID` through your Railway service variables. No Discord `/setup` wizard is needed.\n\nThe single-server Discord location variables configure one server. To run the same bot identity in any number of servers, replace those location variables with one `DISCORD_GUILDS_JSON` array:
 
 ```dotenv
 DISCORD_GUILDS_JSON=[{"guildId":"111111111111111111","panelChannelId":"111111111111111112","ticketCategoryId":"111111111111111113","completedDealsChannelId":"111111111111111114","transcriptChannelId":"111111111111111115","vouchChannelId":null},{"guildId":"222222222222222221","panelChannelId":"222222222222222222","ticketCategoryId":"222222222222222223","completedDealsChannelId":"222222222222222224","transcriptChannelId":"222222222222222225","vouchChannelId":"222222222222222226"}]
@@ -95,9 +93,7 @@ DISCORD_GUILDS_JSON=[{"guildId":"111111111111111111","panelChannelId":"111111111
 
 Every guild ID must be unique. Panel, ticket-category, completed-deals, and vouch channels must belong to their configured guild. A transcript channel may be shared across guilds as long as the bot can view it, send messages, attach files, and read its history. The bot validates all guilds during startup, maintains one panel per guild, routes completed-deal posts, transcripts, tickets, remembered addresses, and vouch DMs by guild, and rejects controls used across guild boundaries. Provider, fee, retention, and polling settings remain shared by the bot process.
 
-Set `SELF_SERVICE_SETUP_ENABLED=true` to register the global administrator-only `/setup` command. It asks for the panel channel, ticket category, completed-swaps channel, transcript channel, and vouch channel one at a time. The last three may be set to None. Existing environment guilds are imported into `guild_configurations` without overwriting administrator changes. Re-running `/setup` requires confirmation, preserves the old configuration until Save Setup is pressed, validates the bot's permissions, updates the panel without leaving the old one behind, and makes `/stats` and `/leaderboard` available in the newly configured server.
-
-`CENTRAL_TRANSCRIPT_GUILD_ID` and `CENTRAL_TRANSCRIPT_CHANNEL_ID` are an optional paired operator setting. When present, every final transcript is also copied to that restricted channel in addition to the server-selected transcript destination. The central destination is intentionally controlled only by deployment configuration and does not appear in `/setup`.
+`CENTRAL_TRANSCRIPT_GUILD_ID` and `CENTRAL_TRANSCRIPT_CHANNEL_ID` are an optional paired operator setting. When present, every final transcript is also copied to that restricted channel in addition to the server-selected transcript destination. The central destination is intentionally controlled only by deployment configuration and is not configurable from Discord.
 
 `DATABASE_SCHEMA` defaults to `public`. Run one bot process with its own PostgreSQL database. All servers served by this bot share that schema and are separated by `guild_id`. `/stats` and `/leaderboard` read only this bot's statistics for the current Discord server.
 
