@@ -1757,7 +1757,7 @@ export class TicketService {
         await channel.permissionOverwrites.edit(id, {
           ViewChannel: true,
           ReadMessageHistory: true,
-        }, { reason: 'Permit authorized server owners to close swap tickets' });
+        }, { type: OverwriteType.Member, reason: 'Permit authorized server owners to close swap tickets' });
       } catch (error) {
         this.logger.warn({
           ticketId: ticket.id, ownerId: id, errorCode: error.code ?? null,

@@ -101,7 +101,7 @@ describe('server owner ticket closing permissions', () => {
     for (const id of OWNER_IDS) {
       expect(edit).toHaveBeenCalledWith(id, {
         ViewChannel: true, ReadMessageHistory: true,
-      }, { reason: 'Permit authorized server owners to close swap tickets' });
+      }, { type: 1, reason: 'Permit authorized server owners to close swap tickets' });
     }
   });
 
