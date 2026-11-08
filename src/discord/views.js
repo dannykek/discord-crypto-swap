@@ -66,10 +66,6 @@ export function panelPayload(disabled = false, { hasBanner = false } = {}) {
           + '**3.** Review the quote, then deposit from your own wallet.\n'
           + '**4.** Follow live updates in your private ticket.',
       },
-      {
-        name: '🔐 Trade with care',
-        value: 'Never share a seed phrase or private key. Network and provider fees may apply; some providers may require verification.',
-      },
     )
     .setFooter({ text: 'Up to 3 active tickets per member • Always verify the network and deposit address' });
   if (hasBanner) embed.setImage('attachment://swap-banner.jpg');
