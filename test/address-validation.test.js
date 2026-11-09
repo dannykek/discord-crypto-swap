@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateKnownAddressFormat, validateSwapAddresses } from '../src/utils/address-validation.js';
+import { isReusableChainAddress, validateKnownAddressFormat, validateSwapAddresses } from '../src/utils/address-validation.js';
 
 describe('conservative wallet format validation', () => {
   it('validates EVM, Solana, Tron, Stellar, Aptos, and Sui formats', () => {
@@ -10,6 +10,16 @@ describe('conservative wallet format validation', () => {
     expect(validateKnownAddressFormat(`G${'A'.repeat(55)}`, 'stellar')).toBeNull();
     expect(validateKnownAddressFormat('0x1', 'aptos')).toBeNull();
     expect(validateKnownAddressFormat(`0x${'a'.repeat(64)}`, 'sui')).toBeNull();
+  });
+
+  it('rejects numbers and malformed Litecoin addresses while allowing common Litecoin formats', () => {
+    expect(validateKnownAddressFormat('100', 'ltc')).toEqual({ network: 'Litecoin' });
+    expect(validateKnownAddressFormat('ltc-refund-address', 'ltc')).toEqual({ network: 'Litecoin' });
+    expect(validateKnownAddressFormat('LKDxGDJq5fF4FohAB8zJH24mDDNHDNtqsE', 'ltc')).toBeNull();
+    expect(validateKnownAddressFormat('ltc1q' + 'a'.repeat(39), 'ltc')).toBeNull();
+    expect(isReusableChainAddress('100', 'ltc')).toBe(false);
+    expect(isReusableChainAddress('100', 'btc')).toBe(false);
+    expect(isReusableChainAddress('LKDxGDJq5fF4FohAB8zJH24mDDNHDNtqsE', 'ltc')).toBe(true);
   });
 
   it('identifies which side has the obvious network mismatch', () => {
