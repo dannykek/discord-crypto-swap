@@ -439,65 +439,94 @@ describe('ticket chat input', () => {
     const result = await service.createPreviewFromChat('ticket', data, sourceMessage);
 
     expect(result.userMessage).toBe(
-      "No solvers are available for LTC → USDT on BNB Chain right now. If you'd like, you can use our backup provider.",
+      'No exchange provider has an available quote for LTC → USDT on BNB Chain right now. Try another amount or ask to be notified.',
     );
     expect(sourceMessage.reply).toHaveBeenCalledWith(expect.objectContaining({ content: result.userMessage }));
     const buttons = sourceMessage.reply.mock.calls[0][0].components[0].toJSON().components;
-    expect(buttons.map(button => button.custom_id)).toEqual(['t:ticket:use-backup', 't:ticket:watch-exact']);
-    expect(buttons[0]).toMatchObject({ label: 'Use backup · 1.25% quote', style: 1 });
-    expect(buttons[1]).toMatchObject({ label: 'Notify me when available', style: 2 });
+    expect(buttons.map(button => button.custom_id)).toEqual(['t:ticket:watch-exact']);
+    expect(buttons[0]).toMatchObject({ label: 'Notify me when available', style: 2 });
   });
 
-  it('offers FixedFloat when 1Click minimum is too high but FixedFloat supports the amount', async () => {
+  it('automatically selects a verified backup when the main provider minimum is too high', async () => {
     const origin = { assetId: 'ltc', blockchain: 'ltc', symbol: 'LTC', decimals: 8 };
     const destination = { assetId: 'usdt-bsc', blockchain: 'bsc', symbol: 'USDT', decimals: 18 };
     const repositories = {
+      savePreview: vi.fn().mockResolvedValue({ id: 'preview' }),
       updateTicketFlowIfStep: vi.fn().mockResolvedValue({ id: 'ticket' }),
-      recordTicketError: vi.fn().mockResolvedValue(undefined),
+      recordTicketError: vi.fn(),
     };
     const sourceMessage = { reply: vi.fn().mockResolvedValue(undefined) };
-    const getFixedFloatIndicativeQuote = vi.fn().mockResolvedValue({ amountInUsd: '200', amountOutUsd: '198' });
+    const getVerifiedQuote = vi.fn()
+      .mockRejectedValueOnce(new Error('minimum is $1000'))
+      .mockResolvedValueOnce({
+        provider: 'fixedfloat',
+        quoteRequest: { backupConsent: true },
+        quote: { amountOut: '198000000000000000000', amountIn: '400000000', amountOutFormatted: '198' },
+      });
     const service = new TicketService({
-      client: {},
-      repositories,
+      client: {}, repositories,
       catalogue: { getAsset: (id) => [origin, destination].find((asset) => asset.assetId === id) ?? null },
-      coinPolicy: { getAssetsForCoin: () => [] },
-      emojis: {},
+      coinPolicy: { getAssetsForCoin: () => [] }, emojis: {},
       oneClick: {
-        getVerifiedQuote: vi.fn().mockRejectedValue(new Error('minimum is $1000')),
-        getFixedFloatIndicativeQuote,
-        classifyError: () => ({
-          code: 'AMOUNT_TOO_LOW',
-          status: 400,
-          userMessage: 'The amount is below the current minimum.',
-          routeLimit: { kind: 'minimum', usd: '1000.00', display: '$1,000.00' },
-        }),
+        getVerifiedQuote,
+        getFixedFloatOffer: vi.fn().mockResolvedValue({ quote: { amountOut: '198000000000000000000' }, minimum: null }),
+        classifyError: () => ({ code: 'AMOUNT_TOO_LOW', status: 400, userMessage: 'Too low', routeLimit: { kind: 'minimum', usd: '1000', display: '$1,000.00' } }),
         safeErrorLogFields: () => ({ errorCode: 'AMOUNT_TOO_LOW' }),
       },
-      config: {},
-      health: {},
-      logger: { warn: vi.fn() },
+      config: { slippageBps: 50, previewTtlMs: 300000 }, health: {}, logger: { warn: vi.fn() },
     });
     service.renderProgress = vi.fn();
     const data = {
-      originAssetId: origin.assetId,
-      destinationAssetId: destination.assetId,
-      amountBase: '400000000',
-      amountDisplay: '4',
-      amountUsdRequested: '200.00',
-      recipient: 'recipient',
-      refundTo: 'refund',
+      originAssetId: origin.assetId, destinationAssetId: destination.assetId,
+      amountBase: '400000000', amountDisplay: '4', amountUsdRequested: '200.00',
+      recipient: 'recipient', refundTo: 'refund',
     };
 
     const result = await service.createPreviewFromChat('ticket', data, sourceMessage);
 
-    expect(getFixedFloatIndicativeQuote).toHaveBeenCalledWith({ originAsset: origin, destinationAsset: destination, amountBase: '400000000' });
-    expect(result.userMessage).toBe("This amount is below our main providers' minimum ($1,000.00), but our backup provider can do this swap.");
-    expect(result.userPayload.components[0].toJSON().components.map(button => button.custom_id)).toEqual([
-      't:ticket:use-backup',
-      't:ticket:watch-exact',
-    ]);
-    expect(data.noRouteOffer).toBe(JSON.stringify(['ltc', 'usdt-bsc', '400000000', 'recipient', 'refund']));
+    expect(result).toEqual({ ok: true });
+    expect(getVerifiedQuote).toHaveBeenCalledTimes(2);
+    expect(getVerifiedQuote).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      provider: 'fixedfloat', backupConsent: true, dry: true, amountBase: '400000000',
+      recipient: 'recipient', refundTo: 'refund',
+    }));
+    expect(repositories.savePreview.mock.calls[0][0].dryQuote).toMatchObject({
+      provider: 'fixedfloat', quoteRequest: { backupConsent: true },
+    });
+    expect(repositories.updateTicketFlowIfStep).toHaveBeenCalledWith('ticket', 'QUOTE_LOADING', 'PREVIEW', data);
+    expect(data.backupConsent).toBe(true);
+    expect(sourceMessage.reply).not.toHaveBeenCalled();
+    expect(repositories.recordTicketError).not.toHaveBeenCalled();
+  });
+
+  it('also tries verified backup automatically when the primary route has no liquidity', async () => {
+    const origin = { assetId: 'ltc', blockchain: 'ltc', symbol: 'LTC', decimals: 8 };
+    const destination = { assetId: 'usdt-bsc', blockchain: 'bsc', symbol: 'USDT', decimals: 18 };
+    const getVerifiedQuote = vi.fn()
+      .mockRejectedValueOnce(new Error('no liquidity'))
+      .mockResolvedValueOnce({ provider: 'fixedfloat', quoteRequest: { backupConsent: true }, quote: { amountOut: '1000' } });
+    const savePreview = vi.fn().mockResolvedValue({ id: 'preview' });
+    const service = new TicketService({
+      client: {},
+      repositories: { savePreview, updateTicketFlowIfStep: vi.fn().mockResolvedValue({ id: 'ticket' }), recordTicketError: vi.fn() },
+      catalogue: { getAsset: (id) => [origin, destination].find((asset) => asset.assetId === id) ?? null },
+      coinPolicy: {}, emojis: {},
+      oneClick: {
+        getVerifiedQuote,
+        getFixedFloatOffer: vi.fn().mockResolvedValue(null),
+        classifyError: () => ({ code: 'NO_LIQUIDITY_ROUTE', userMessage: 'No route', status: 400 }),
+        safeErrorLogFields: () => ({ errorCode: 'NO_LIQUIDITY_ROUTE' }),
+      },
+      config: { previewTtlMs: 300000 }, health: {}, logger: { warn: vi.fn() },
+    });
+    service.renderProgress = vi.fn();
+    const result = await service.createPreviewFromChat('ticket', {
+      originAssetId: origin.assetId, destinationAssetId: destination.assetId, amountBase: '100000000',
+      recipient: 'recipient', refundTo: 'refund',
+    }, { reply: vi.fn() });
+    expect(result).toEqual({ ok: true });
+    expect(getVerifiedQuote).toHaveBeenCalledTimes(2);
+    expect(savePreview.mock.calls[0][0].dryQuote.provider).toBe('fixedfloat');
   });
 
   it('keeps the normal minimum message when FixedFloat also rejects the amount', async () => {
@@ -528,7 +557,7 @@ describe('ticket chat input', () => {
       recipient: 'recipient', refundTo: 'refund',
     }, sourceMessage);
 
-    expect(result.userMessage).toBe('The amount is below the minimum available for this route.');
+    expect(result.userMessage).toBe('Swap amount is too low for this route. Enter a larger amount to continue.');
     expect(result.userPayload).toEqual({ content: result.userMessage });
   });
 
@@ -579,7 +608,7 @@ describe('ticket chat input', () => {
       amountBase: '1000000', amountDisplay: '0.01', amountUsdRequested: '0.55', recipient: 'recipient', refundTo: 'refund',
     }, { reply: vi.fn().mockResolvedValue(undefined) });
 
-    expect(result.userMessage).toBe('The amount is below the minimum for this route.\nMain providers: minimum $1,000.00.\nBackup provider: minimum 0.2 LTC (≈$11.05).\nEnter a larger amount to continue.');
+    expect(result.userMessage).toBe('Swap amount is too low. Minimum currently reported for this route: $11.05. Enter a larger amount to continue.');
     expect(result.userPayload.components).toBeUndefined();
   });
 
@@ -647,7 +676,7 @@ describe('ticket chat input', () => {
     }, sourceMessage);
 
     expect(getVerifiedQuote).toHaveBeenCalledWith(expect.objectContaining({ provider: 'fixedfloat', backupConsent: true }));
-    expect(result.userMessage).toBe('The backup provider is unavailable for this route right now. Try a different amount or choose another route.');
+    expect(result.userMessage).toBe('No exchange provider has an available quote for LTC → USDT on BNB Chain right now. Try another amount or ask to be notified.');
     expect(result.userPayload).toEqual({ content: result.userMessage });
   });
 });
