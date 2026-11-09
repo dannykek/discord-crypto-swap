@@ -18,7 +18,6 @@ import {
   parseUsdAmount,
   toBaseUnits,
   tokenAmountUsd,
-  quotedRouteCostPercentDisplay,
   roundBaseUnitsUpToPrecision,
   usdToBaseUnits,
 } from '../utils/amounts.js';
