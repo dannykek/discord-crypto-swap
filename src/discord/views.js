@@ -479,12 +479,9 @@ export function completedDealEmbed(swap, catalogue, reference, { routeGraphic = 
   const embed = new EmbedBuilder()
     .setColor(0x43CDA5)
     .setTitle('✅ Deal Complete')
-    .setDescription('Your exchange has been completed and the destination payout has been reported.')
-    .addFields(
-      { name: 'SENT', value: `**${safeCode(settlement.amountInFormatted)} ${safeCode(origin?.symbol)}**\n${safeCode(networkLabel(origin?.blockchain))}`, inline: true },
-      { name: 'RECEIVED', value: `**${safeCode(settlement.amountOutFormatted)} ${safeCode(destination?.symbol)}**\n${safeCode(networkLabel(destination?.blockchain))}`, inline: true },
-      { name: 'USD VALUE', value: `${formatUsd(usdValues?.amountInUsd)} → ${formatUsd(usdValues?.amountOutUsd)}`, inline: true },
-      { name: 'TOTAL SWAP COST', value: fee, inline: true },
+    .setDescription(
+      `**${safeCode(settlement.amountInFormatted)} ${safeCode(origin?.symbol)} (${safeCode(networkLabel(origin?.blockchain))}) → ${safeCode(settlement.amountOutFormatted)} ${safeCode(destination?.symbol)} (${safeCode(networkLabel(destination?.blockchain))})**\\n`
+      + `${fixedFloat ? 'Quoted USD: ' : ''}${formatUsd(usdValues?.amountInUsd)} → ${formatUsd(usdValues?.amountOutUsd)} • ${fee} total swap cost`,
     )
     .setThumbnail('attachment://deal-history.gif')
     .setFooter({ text: `Order ${reference.slice(0, 6).toUpperCase()}` });
