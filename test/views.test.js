@@ -392,31 +392,31 @@ describe('coin-first ticket component views', () => {
     expect(json.description.split('\n')[1]).toContain('$100.00 → $99.00');
   });
 
-  it('links completed deals only to the origin deposit transaction', () => {
-    const components = completedDealComponents({
+  it('links completed deals to the destination payout transaction, never the deposit', () => {
+    const hash = '0x' + 'a'.repeat(64);
+    const completed = {
+      status: 'SUCCESS',
       origin_asset_id: assets[5].assetId,
+      destination_asset_id: assets[6].assetId,
       last_status_response: {
         swapDetails: {
-          destinationChainTxHashes: [{ explorerUrl: 'https://destination.example/tx/payout' }],
-          originChainTxHashes: [{ explorerUrl: 'https://blockchair.com/litecoin/transaction/deposit' }],
+          destinationChainTxHashes: [{ hash, explorerUrl: 'https://malicious.example/transaction' }],
+          originChainTxHashes: [{ hash: 'deposit-hash', explorerUrl: 'https://blockchair.com/litecoin/transaction/deposit' }],
         },
       },
-    }, catalogue).map((row) => row.toJSON());
+    };
+    const components = completedDealComponents(completed, catalogue).map((row) => row.toJSON());
     expect(components[0].components[0]).toMatchObject({
-      label: 'View transaction',
-      url: 'https://blockchair.com/litecoin/transaction/deposit',
+      label: 'View payout transaction',
+      url: `https://etherscan.io/tx/${hash}`,
     });
+    // An origin hash is not a substitute for a destination payout.
     expect(completedDealComponents({
-      origin_asset_id: assets[5].assetId,
-      last_status_response: {
-        swapDetails: {
-          originChainTxHashes: [{ hash: 'valid-transaction-hash', explorerUrl: 'https://explorer.near-intents.org/?search=valid-transaction-hash' }],
-        },
-      },
-    }, catalogue)[0].toJSON().components[0].url).toBe('https://blockchair.com/litecoin/transaction/valid-transaction-hash');
+      ...completed, last_status_response: { swapDetails: { originChainTxHashes: [{ hash: 'deposit-hash' }] } },
+    }, catalogue)).toEqual([]);
+    expect(completedDealComponents({ ...completed, status: 'PROCESSING' }, catalogue)).toEqual([]);
     expect(completedDealComponents({
-      origin_asset_id: assets[5].assetId,
-      last_status_response: { swapDetails: { originChainTxHashes: [{ hash: 'bad hash', explorerUrl: 'javascript:alert(1)' }] } },
+      ...completed, last_status_response: { swapDetails: { destinationChainTxHashes: [{ hash: 'bad hash' }] } },
     }, catalogue)).toEqual([]);
   });
 
