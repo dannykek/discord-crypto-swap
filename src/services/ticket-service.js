@@ -1124,31 +1124,59 @@ export class TicketService {
       return { ok: false, userMessage: 'A selected asset is no longer available. Go back and choose the coins again.' };
     }
 
-    // Ask the backup alongside the main providers: its price can beat theirs,
-    // and its minimum matters when theirs is too high.
+    // Compare backup pricing without blocking the main provider's quote.
+    // If the main route cannot be quoted, try an actual verified backup quote
+    // transparently, rather than requiring a second 'Use backup' click.
     const backupOfferPromise = data.backupConsent === true
       ? Promise.resolve(null)
       : this.checkBackupOffer(ticketId, originAsset, destinationAsset, data.amountBase);
+    let fallbackFailure = null;
     try {
-      const quote = await this.oneClick.getVerifiedQuote({
+      const parameters = {
         dry: true,
-        provider: data.backupConsent ? 'fixedfloat' : undefined,
-        backupConsent: data.backupConsent === true,
         originAsset,
         destinationAsset,
         amountBase: data.amountBase,
         recipient: data.recipient,
         refundTo: data.refundTo,
-      });
-      const backup = await backupOfferPromise;
-      // Offered, never switched to: the backup still needs the owner's explicit click.
-      if (backup?.quote && BigInt(backup.quote.amountOut) > BigInt(quote.quote.amountOut)) {
-        quote.backupOffer = {
-          amountOut: backup.quote.amountOut,
-          amountOutFormatted: backup.quote.amountOutFormatted,
-          cost: quotedRouteCostPercentDisplay(backup.quote),
-        };
+      };
+      let quote;
+      try {
+        quote = await this.oneClick.getVerifiedQuote({
+          ...parameters,
+          provider: data.backupConsent ? 'fixedfloat' : undefined,
+          backupConsent: data.backupConsent === true,
+        });
+      } catch (primaryError) {
+        const initial = this.oneClick.classifyError(primaryError, { operation: 'preview_quote' });
+        if (data.backupConsent || !['AMOUNT_TOO_LOW', 'NO_LIQUIDITY_ROUTE'].includes(initial.code)) throw primaryError;
+        try {
+          quote = await this.oneClick.getVerifiedQuote({ ...parameters, provider: 'fixedfloat', backupConsent: true });
+          // Persist the chosen provider with the preview: confirmation must
+          // use the *same* provider and never switch once deposit is requested.
+          data.backupConsent = true;
+          data.noRouteOffer = null;
+        } catch (backupError) {
+          fallbackFailure = this.oneClick.classifyError(backupError, { operation: 'fixedfloat_quote' });
+          this.logger.warn({
+            ticketId,
+            ...this.oneClick.safeErrorLogFields(backupError, { operation: 'fixedfloat_quote' }),
+          }, 'Backup could not supply a verified quote after the main route failed');
+          throw primaryError;
+        }
       }
+      if (quote.provider !== 'fixedfloat') {
+        const backup = await backupOfferPromise;
+        // Main quote is available; keep the optional better-price choice.
+        if (backup?.quote && BigInt(backup.quote.amountOut) > BigInt(quote.quote.amountOut)) {
+          quote.backupOffer = {
+            amountOut: backup.quote.amountOut,
+            amountOutFormatted: backup.quote.amountOutFormatted,
+            cost: quotedRouteCostPercentDisplay(backup.quote),
+          };
+        }
+      }
+      data.noRouteOffer = null;
       const preview = await this.repositories.savePreview({
         id: randomUUID(),
         ticketId,
@@ -1172,7 +1200,7 @@ export class TicketService {
       return { ok: true };
     } catch (error) {
       try {
-        return await this.handlePreviewFailure(ticketId, data, sourceMessage, error, originAsset, destinationAsset, backupOfferPromise);
+        return await this.handlePreviewFailure(ticketId, data, sourceMessage, error, originAsset, destinationAsset, backupOfferPromise, fallbackFailure);
       } catch (handlingError) {
         // Never leave the ticket on the loading step, even if reporting the failure fails.
         await this.repositories.updateTicketFlowIfStep(ticketId, 'QUOTE_LOADING', 'REFUND_ADDRESS', data).catch(() => null);
@@ -1181,32 +1209,39 @@ export class TicketService {
     }
   }
 
-  async handlePreviewFailure(ticketId, data, sourceMessage, error, originAsset, destinationAsset, backupOfferPromise) {
+  async handlePreviewFailure(ticketId, data, sourceMessage, error, originAsset, destinationAsset, backupOfferPromise, fallbackFailure = null) {
     this.markAuthenticationHealth(error);
     const classification = this.oneClick.classifyError(error, { operation: 'preview_quote' });
     const backupSelected = data.backupConsent === true;
     const backup = !backupSelected && ['AMOUNT_TOO_LOW', 'NO_LIQUIDITY_ROUTE'].includes(classification.code)
       ? await backupOfferPromise : null;
-    const backupAvailable = backup?.available === true;
-    const backupQuote = backup?.quote ?? null;
     const backupMinimum = backup?.minimum ?? null;
-    const offerRecovery = classification.code === 'NO_LIQUIDITY_ROUTE' || backupAvailable;
+    // An indicative backup offer is not proof that a wallet-specific quote
+    // can execute. We already attempted the verified quote before reaching here.
+    const addressFailure = ['INVALID_RECIPIENT_ADDRESS', 'INVALID_REFUND_ADDRESS', 'INVALID_WALLET_ADDRESS']
+      .includes(fallbackFailure?.code)
+      ? fallbackFailure : null;
+    const failureCode = addressFailure?.code
+      ?? (classification.code === 'NO_LIQUIDITY_ROUTE'
+        && (fallbackFailure?.code === 'AMOUNT_TOO_LOW' || backupMinimum)
+        ? 'AMOUNT_TOO_LOW' : classification.code);
+    const offerRecovery = failureCode === 'NO_LIQUIDITY_ROUTE' && !backupSelected;
     data.noRouteOffer = offerRecovery ? routeFingerprint(data) : null;
     data.backupConsent = false;
-    await this.repositories.updateTicketFlowIfStep(ticketId, 'QUOTE_LOADING', quoteRecoveryStep(classification.code), data);
-    await this.repositories.recordTicketError(ticketId, classification.code, classification.status);
+    await this.repositories.updateTicketFlowIfStep(ticketId, 'QUOTE_LOADING', quoteRecoveryStep(failureCode), data);
+    await this.repositories.recordTicketError(ticketId, failureCode, classification.status);
     this.logger.warn({ ticketId, ...this.oneClick.safeErrorLogFields(error, { operation: 'preview_quote' }) }, 'Preview quote request failed');
     await this.renderProgress(ticketId);
-    const userPayload = quoteFailurePayload(ticketId, classification, originAsset, destinationAsset, this.coinPolicy, {
-      backupSelected,
-      backupAvailable,
-      backupQuote,
-      backupMinimum,
-    });
+    const userPayload = addressFailure
+      ? { content: addressFailure.userMessage || 'Please check the receiving and refund addresses, then try again.' }
+      : quoteFailurePayload(ticketId, { ...classification, code: failureCode }, originAsset, destinationAsset, this.coinPolicy, {
+        backupSelected,
+        backupMinimum,
+        fallbackFailure,
+      });
     await this.replyToTicketMessage(sourceMessage, userPayload);
     return { ok: false, userMessage: userPayload.content, userPayload };
   }
-
   async checkBackupOffer(ticketId, originAsset, destinationAsset, amountBase) {
     const parameters = { originAsset, destinationAsset, amountBase };
     try {
@@ -2268,57 +2303,54 @@ function quoteRecoveryStep(errorCode) {
   return 'REFUND_ADDRESS';
 }
 
-function quoteFailureMessage(classification, originAsset, destinationAsset, coinPolicy) {
-  if (classification.code !== 'NO_LIQUIDITY_ROUTE' || !originAsset || !destinationAsset) {
-    return classification.userMessage;
-  }
-  const origin = compactRouteAsset(originAsset, coinPolicy);
-  const destination = compactRouteAsset(destinationAsset, coinPolicy);
-  return `No solvers are available for ${origin} → ${destination} right now. If you'd like, you can use our backup provider.`;
+function quoteFailureMessage(classification) {
+  return classification.userMessage;
 }
-
 function quoteFailurePayload(
   ticketId,
   classification,
   originAsset,
   destinationAsset,
   coinPolicy,
-  { backupSelected = false, backupAvailable = false, backupQuote = null, backupMinimum = null } = {},
+  { backupSelected = false, backupMinimum = null, fallbackFailure = null } = {},
 ) {
-  let content = quoteFailureMessage(classification, originAsset, destinationAsset, coinPolicy);
-  const mainMinimum = classification.routeLimit?.kind === 'minimum' ? classification.routeLimit.display : null;
-  if (backupSelected && classification.code === 'NO_LIQUIDITY_ROUTE') {
-    content = 'The backup provider is unavailable for this route right now. Try a different amount or choose another route.';
-  } else if (backupAvailable && classification.code === 'AMOUNT_TOO_LOW' && originAsset && destinationAsset) {
-    content = `This amount is below our main providers' minimum${mainMinimum ? ` (${mainMinimum})` : ''}, but our backup provider can do this swap.`;
-  } else if (!backupAvailable && backupMinimum && classification.code === 'AMOUNT_TOO_LOW' && originAsset) {
-    const usd = Number(backupMinimum.amountUsd) > 0 ? ` (≈$${Number(backupMinimum.amountUsd).toFixed(2)})` : '';
-    content = 'The amount is below the minimum for this route.'
-      + `\nMain providers: ${mainMinimum ? `minimum ${mainMinimum}` : 'no route at this amount'}.`
-      + `\nBackup provider: minimum ${backupMinimum.amountFormatted} ${originAsset.symbol}${usd}.`
-      + '\nEnter a larger amount to continue.';
-  } else if (!backupAvailable && classification.code === 'NO_LIQUIDITY_ROUTE' && originAsset && destinationAsset) {
+  if (classification.code === 'AMOUNT_TOO_LOW') {
+    // Quote availability matters: only show a minimum after *all* providers
+    // have failed. Use the lowest numeric, provider-reported USD minimum.
+    const mainUsd = positiveMinimumUsd(classification.routeLimit?.usd)
+      ?? positiveMinimumUsd(classification.routeLimit?.display);
+    const backupUsd = positiveMinimumUsd(backupMinimum?.amountUsd)
+      ?? positiveMinimumUsd(fallbackFailure?.routeLimit?.usd)
+      ?? positiveMinimumUsd(fallbackFailure?.routeLimit?.display);
+    const knownMinimums = [mainUsd, backupUsd].filter((value) => value !== null);
+    const minimum = knownMinimums.length ? Math.min(...knownMinimums) : null;
+    const content = minimum !== null
+      ? `Swap amount is too low. Minimum currently reported for this route: $${minimum.toFixed(2)}. Enter a larger amount to continue.`
+      : 'Swap amount is too low for this route. Enter a larger amount to continue.';
+    return { content };
+  }
+  if (classification.code === 'NO_LIQUIDITY_ROUTE' && originAsset && destinationAsset) {
     const origin = compactRouteAsset(originAsset, coinPolicy);
     const destination = compactRouteAsset(destinationAsset, coinPolicy);
-    content = `No solvers are available for ${origin} → ${destination} right now. You can ask to be notified when the route becomes available.`;
+    const content = `No exchange provider has an available quote for ${origin} → ${destination} right now. Try another amount or ask to be notified.`;
+    if (backupSelected) return { content };
+    return {
+      content,
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`t:${ticketId}:watch-exact`).setLabel('Notify me when available').setStyle(ButtonStyle.Secondary),
+      )],
+    };
   }
-  const offerChoice = classification.code === 'NO_LIQUIDITY_ROUTE' || backupAvailable;
-  if (backupSelected || !offerChoice || !originAsset || !destinationAsset) return { content };
-  const buttons = [];
-  if (backupAvailable) {
-    buttons.push(new ButtonBuilder().setCustomId(`t:${ticketId}:use-backup`).setLabel(`Use backup · ${fixedFloatOfferQuote(backupQuote)} quote`).setStyle(ButtonStyle.Primary));
-  }
-  buttons.push(new ButtonBuilder().setCustomId(`t:${ticketId}:watch-exact`).setLabel('Notify me when available').setStyle(ButtonStyle.Secondary));
-  return {
-    content,
-    components: [new ActionRowBuilder().addComponents(buttons)],
-  };
+  return { content: quoteFailureMessage(classification, originAsset, destinationAsset, coinPolicy) };
 }
 
-function fixedFloatOfferQuote(quote) {
-  return quotedRouteCostPercentDisplay(quote);
+function positiveMinimumUsd(value) {
+  if (value === null || value === undefined) return null;
+  const cleaned = String(value).replace(/[$,]/g, '').trim();
+  if (!/^(?:\d+)(?:\.\d+)?$/.test(cleaned)) return null;
+  const amount = Number(cleaned);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
-
 function popularRouteProbeAmount(originAsset) {
   let amountBase = usdToBaseUnits(POPULAR_ROUTE_PROBE_USD, String(originAsset.price), originAsset.decimals);
   if (isStablecoin(originAsset)) {
