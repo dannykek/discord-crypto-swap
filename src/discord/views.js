@@ -501,7 +501,7 @@ export function completedDealComponents(swap, catalogue = null) {
     .find(Boolean);
   if (!link) return [];
   return [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setLabel('View payout transaction').setStyle(ButtonStyle.Link).setURL(link.url),
+    new ButtonBuilder().setLabel('View transaction').setStyle(ButtonStyle.Link).setURL(link.url),
   )];
 }
 
