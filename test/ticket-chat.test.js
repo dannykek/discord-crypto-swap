@@ -43,8 +43,9 @@ describe('ticket chat input', () => {
     await service.handleMessage(message(recipient));
     expect(updates.at(-1)).toMatchObject({ next: 'REFUND_ADDRESS', data: { recipient } });
 
-    await service.handleMessage(message('ltc-refund-address'));
-    expect(updates.at(-1)).toMatchObject({ next: 'QUOTE_LOADING', data: { refundTo: 'ltc-refund-address' } });
+    const validLtc = 'LKDxGDJq5fF4FohAB8zJH24mDDNHDNtqsE';
+    await service.handleMessage(message(validLtc));
+    expect(updates.at(-1)).toMatchObject({ next: 'QUOTE_LOADING', data: { refundTo: validLtc } });
     expect(service.createPreviewFromChat).toHaveBeenCalledOnce();
   });
 
@@ -84,11 +85,11 @@ describe('ticket chat input', () => {
     });
   });
 
-  it('reuses the latest address saved for each blockchain when the owner types yes', async () => {
+  it('reuses a valid address only from completed swaps when the owner types yes', async () => {
     const origin = { assetId: 'ltc', symbol: 'LTC', blockchain: 'ltc', decimals: 8 };
     const destination = { assetId: 'eth', symbol: 'ETH', blockchain: 'eth', decimals: 18 };
     const recipient = `0x${'b'.repeat(40)}`;
-    const refundTo = 'ltc-saved-refund-address';
+    const refundTo = 'LKDxGDJq5fF4FohAB8zJH24mDDNHDNtqsE';
     const ticket = {
       id: 'ticket', guild_id: 'guild', channel_id: 'channel', user_id: 'owner', state: 'OPEN', step: 'RECIPIENT_ADDRESS',
       state_data: { originAssetId: 'ltc', destinationAssetId: 'eth' },
@@ -96,8 +97,8 @@ describe('ticket chat input', () => {
     const repositories = {
       getOpenTicketByChannel: async () => ticket,
       touchTicket: vi.fn().mockResolvedValue(ticket),
-      getUserChainAddress: vi.fn().mockImplementation(async (guildId, userId, blockchain) => (
-        blockchain === 'eth' ? recipient : refundTo
+      getUserChainAddress: vi.fn().mockImplementation(async (guildId, userId, blockchain, side) => (
+        blockchain === 'eth' && side === 'recipient' ? recipient : blockchain === 'ltc' && side === 'refund' ? refundTo : null
       )),
       saveUserChainAddress: vi.fn().mockImplementation(async (guildId, userId, blockchain, address) => address),
       updateTicketFlowIfStep: async (id, expected, next, data) => {
@@ -118,6 +119,8 @@ describe('ticket chat input', () => {
     expect(ticket.state_data).toMatchObject({ refundTo });
     expect(service.createPreviewFromChat).toHaveBeenCalledOnce();
     expect(repositories.saveUserChainAddress).not.toHaveBeenCalled();
+    expect(repositories.getUserChainAddress).toHaveBeenCalledWith('guild', 'owner', 'eth', 'recipient');
+    expect(repositories.getUserChainAddress).toHaveBeenCalledWith('guild', 'owner', 'ltc', 'refund');
   });
 
   it('asks for an address when yes is entered without a saved address', async () => {
@@ -144,7 +147,7 @@ describe('ticket chat input', () => {
   });
 
   it('hydrates saved addresses for tickets already waiting on an address after restart', async () => {
-    const repositories = { getUserChainAddress: vi.fn().mockResolvedValue('saved-sol-address') };
+    const repositories = { getUserChainAddress: vi.fn().mockResolvedValue('11111111111111111111111111111111') };
     const service = makeService({
       repositories,
       assets: [{ assetId: 'sol', symbol: 'SOL', blockchain: 'sol', decimals: 9 }],
@@ -155,26 +158,58 @@ describe('ticket chat input', () => {
     };
 
     await expect(service.withRememberedAddress(ticket)).resolves.toMatchObject({
-      state_data: { rememberedRecipientAddress: 'saved-sol-address' },
+      state_data: { rememberedRecipientAddress: '11111111111111111111111111111111' },
     });
-    expect(repositories.getUserChainAddress).toHaveBeenCalledWith('guild', 'owner', 'sol');
+    expect(repositories.getUserChainAddress).toHaveBeenCalledWith('guild', 'owner', 'sol', 'recipient');
   });
 
-  it('remembers both addresses after the provider accepts the preview quote', async () => {
-    const repositories = {
-      getTicket: vi.fn().mockResolvedValue({ guild_id: 'guild', user_id: 'owner' }),
-      saveUserChainAddress: vi.fn().mockImplementation(async (guildId, userId, blockchain, address) => address),
+  it('never offers a cached amount from an abandoned ticket as an address', async () => {
+    const repos = {
+      getUserChainAddress: vi.fn().mockResolvedValue(null),
     };
-    const service = makeService({ repositories });
+    const service = makeService({
+      repositories: repos,
+      assets: [{ assetId: 'ltc', symbol: 'LTC', blockchain: 'ltc', decimals: 8 }],
+    });
+    const ticket = {
+      guild_id: 'guild', user_id: 'owner', step: 'RECIPIENT_ADDRESS',
+      state_data: { destinationAssetId: 'ltc', rememberedRecipientAddress: '100' },
+    };
+    const updated = await service.withRememberedAddress(ticket);
+    expect(updated.state_data).not.toHaveProperty('rememberedRecipientAddress');
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const openTicket = { ...ticket, id: 'ticket', state: 'OPEN', channel_id: 'channel' };
+    repos.getOpenTicketByChannel = vi.fn().mockResolvedValue(openTicket);
+    repos.touchTicket = vi.fn().mockResolvedValue(openTicket);
+    await service.handleMessage(message('yes', reply));
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('completed swap'),
+    }));
+    expect(repos.getUserChainAddress).toHaveBeenCalledWith('guild', 'owner', 'ltc', 'recipient');
+  });
 
-    await expect(service.rememberUserAddresses(
-      'ticket',
-      { blockchain: 'ltc' },
-      { blockchain: 'eth' },
-      { recipient: `0x${'c'.repeat(40)}`, refundTo: 'ltc-refund' },
-    )).resolves.toBe(true);
-    expect(repositories.saveUserChainAddress).toHaveBeenNthCalledWith(1, 'guild', 'owner', 'eth', `0x${'c'.repeat(40)}`);
-    expect(repositories.saveUserChainAddress).toHaveBeenNthCalledWith(2, 'guild', 'owner', 'ltc', 'ltc-refund');
+  it('rejects a numeric Litecoin address and keeps the user on the address step', async () => {
+    const origin = { assetId: 'usdt', symbol: 'USDT', blockchain: 'bsc', decimals: 18 };
+    const destination = { assetId: 'ltc', symbol: 'LTC', blockchain: 'ltc', decimals: 8 };
+    const ticket = {
+      id: 'ticket', guild_id: 'guild', channel_id: 'channel', user_id: 'owner',
+      state: 'OPEN', step: 'RECIPIENT_ADDRESS',
+      state_data: { originAssetId: 'usdt', destinationAssetId: 'ltc' },
+    };
+    const repositories = {
+      getOpenTicketByChannel: vi.fn().mockResolvedValue(ticket),
+      touchTicket: vi.fn().mockResolvedValue(ticket),
+      getUserChainAddress: vi.fn().mockResolvedValue(null),
+      updateTicketFlowIfStep: vi.fn(),
+    };
+    const service = makeService({ repositories, assets: [origin, destination] });
+    const reply = vi.fn().mockResolvedValue(undefined);
+    await service.handleMessage(message('100', reply));
+    expect(ticket.step).toBe('RECIPIENT_ADDRESS');
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('valid Litecoin address'),
+    }));
+    expect(repositories.updateTicketFlowIfStep).not.toHaveBeenCalled();
   });
 
   it('rejects malformed USD without logging the message contents', async () => {
