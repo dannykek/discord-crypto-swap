@@ -251,11 +251,16 @@ export class Repositories {
     const result = await this.pool.query(
       `SELECT * FROM tickets
        WHERE guild_id = $1 AND user_id = $2 AND state <> 'DELETED'
-       ORDER BY create  async getUserChainAddress(guildId, userId, blockchain, side = 'recipient') {
+       ORDER BY created_at DESC`,
+      [guildId, userId],
+    );
+    return result.rows;
+  }
+
+  async getUserChainAddress(guildId, userId, blockchain, side = 'recipient') {
     if (!['recipient', 'refund'].includes(side)) throw new TypeError('Invalid remembered address role.');
-    // Never trust user_chain_addresses: legacy rows could be captured from
-    // abandoned previews, including mistyped amounts such as "100".
-    // Read only addresses from completed swaps for this person and guild.
+    // Ignore the legacy preview-time address cache: it may contain an amount
+    // accidentally entered into an abandoned ticket.
     const result = await this.pool.query(
       `SELECT CASE WHEN $4 = 'refund' THEN s.refund_to ELSE s.recipient END AS address
        FROM swaps s
@@ -275,10 +280,6 @@ export class Repositories {
       if (isReusableChainAddress(address, blockchain)) return address.trim();
     }
     return null;
-  }
-kchain, address],
-    );
-    return result.rows[0]?.address ?? null;
   }
 
   async getOpenTicketByChannel(channelId) {
