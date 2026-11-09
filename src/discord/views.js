@@ -480,7 +480,7 @@ export function completedDealEmbed(swap, catalogue, reference, { routeGraphic = 
     .setColor(0x43CDA5)
     .setTitle('✅ Deal Complete')
     .setDescription(
-      `**${safeCode(settlement.amountInFormatted)} ${safeCode(origin?.symbol)} (${safeCode(networkLabel(origin?.blockchain))}) → ${safeCode(settlement.amountOutFormatted)} ${safeCode(destination?.symbol)} (${safeCode(networkLabel(destination?.blockchain))})**\\n`
+      `**${safeCode(settlement.amountInFormatted)} ${safeCode(origin?.symbol)} (${safeCode(networkLabel(origin?.blockchain))}) → ${safeCode(settlement.amountOutFormatted)} ${safeCode(destination?.symbol)} (${safeCode(networkLabel(destination?.blockchain))})**\n`
       + `${fixedFloat ? 'Quoted USD: ' : ''}${formatUsd(usdValues?.amountInUsd)} → ${formatUsd(usdValues?.amountOutUsd)} • ${fee} total swap cost`,
     )
     .setThumbnail('attachment://deal-history.gif')
