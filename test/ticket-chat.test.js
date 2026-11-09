@@ -612,30 +612,69 @@ describe('ticket chat input', () => {
     expect(result.userPayload.components).toBeUndefined();
   });
 
-  it.each([['999', true], ['1000', false]])('offers the backup on a successful preview only when it pays more (%s vs 1000)', async (backupOut, offered) => {
+  it.each([['998', 'fixedfloat'], ['1000', 'relay']])(
+    'automatically selects the greatest verified received amount (main=%s, winner=%s)',
+    async (mainAmountOut, winner) => {
+      const origin = { assetId: 'usdt-bsc', blockchain: 'bsc', symbol: 'USDT', decimals: 18 };
+      const destination = { assetId: 'sol', blockchain: 'sol', symbol: 'SOL', decimals: 9 };
+      const savePreview = vi.fn().mockResolvedValue({ id: 'preview' });
+      const getVerifiedQuote = vi.fn()
+        .mockResolvedValueOnce({ provider: 'relay', quote: { amountOut: mainAmountOut } })
+        .mockResolvedValueOnce({ provider: 'fixedfloat', quoteRequest: { backupConsent: true }, quote: { amountOut: '999' } });
+      const service = new TicketService({
+        client: {},
+        repositories: { savePreview, updateTicketFlowIfStep: vi.fn().mockResolvedValue({ id: 'ticket' }) },
+        catalogue: { getAsset: (id) => [origin, destination].find((asset) => asset.assetId === id) ?? null },
+        coinPolicy: { getAssetsForCoin: () => [] }, emojis: {},
+        oneClick: { getVerifiedQuote, fixedFloat: { enabled: true } },
+        config: { slippageBps: 50, previewTtlMs: 600000 }, health: {}, logger: { warn: vi.fn() },
+      });
+      service.renderProgress = vi.fn();
+      const data = {
+        originAssetId: origin.assetId, destinationAssetId: destination.assetId,
+        amountBase: '100', amountDisplay: '100', recipient: 'recipient', refundTo: 'refund',
+      };
+
+      await expect(service.createPreviewFromChat('ticket', data, null)).resolves.toEqual({ ok: true });
+
+      const dryQuote = savePreview.mock.calls[0][0].dryQuote;
+      expect(dryQuote.provider).toBe(winner);
+      expect(dryQuote.backupOffer).toBeUndefined();
+      expect(data.backupConsent).toBe(winner === 'fixedfloat');
+      expect(getVerifiedQuote).toHaveBeenCalledTimes(2);
+      expect(getVerifiedQuote).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        provider: 'fixedfloat', backupConsent: true, dry: true,
+      }));
+    },
+  );
+
+  it('stays with a valid main quote when backup quote verification fails', async () => {
     const origin = { assetId: 'usdt-bsc', blockchain: 'bsc', symbol: 'USDT', decimals: 18 };
     const destination = { assetId: 'sol', blockchain: 'sol', symbol: 'SOL', decimals: 9 };
     const savePreview = vi.fn().mockResolvedValue({ id: 'preview' });
+    const getVerifiedQuote = vi.fn()
+      .mockResolvedValueOnce({ provider: 'relay', quote: { amountOut: '1000' } })
+      .mockRejectedValueOnce(new Error('Backup unavailable'));
     const service = new TicketService({
       client: {},
-      repositories: { savePreview, updateTicketFlowIfStep: vi.fn().mockResolvedValue({ id: 'ticket' }), saveUserChainAddress: vi.fn().mockResolvedValue(undefined) },
+      repositories: { savePreview, updateTicketFlowIfStep: vi.fn().mockResolvedValue({ id: 'ticket' }) },
       catalogue: { getAsset: (id) => [origin, destination].find((asset) => asset.assetId === id) ?? null },
-      coinPolicy: { getAssetsForCoin: () => [] }, emojis: {},
+      coinPolicy: {}, emojis: {},
       oneClick: {
-        getVerifiedQuote: vi.fn().mockResolvedValue({ provider: 'relay', quote: { amountOut: backupOut === '999' ? '998' : '1000' } }),
-        getFixedFloatOffer: vi.fn().mockResolvedValue({ quote: { amountOut: '999', amountOutFormatted: '0.000000999', amountInUsd: '100', amountOutUsd: '99.5' }, minimum: null }),
+        getVerifiedQuote, fixedFloat: { enabled: true },
+        classifyError: () => ({ code: 'NO_LIQUIDITY_ROUTE' }),
       },
-      config: { slippageBps: 50, previewTtlMs: 600000 }, health: {}, logger: { warn: vi.fn() },
+      config: { previewTtlMs: 300000 }, health: {}, logger: { warn: vi.fn() },
     });
     service.renderProgress = vi.fn();
-
-    await service.createPreviewFromChat('ticket', {
-      originAssetId: origin.assetId, destinationAssetId: destination.assetId, amountBase: '100', amountDisplay: '100', recipient: 'recipient', refundTo: 'refund',
-    }, null);
-
-    const dryQuote = savePreview.mock.calls[0][0].dryQuote;
-    if (offered) expect(dryQuote.backupOffer).toMatchObject({ amountOut: '999', amountOutFormatted: '0.000000999' });
-    else expect(dryQuote.backupOffer).toBeUndefined();
+    const data = {
+      originAssetId: origin.assetId, destinationAssetId: destination.assetId,
+      amountBase: '100', amountDisplay: '100', recipient: 'recipient', refundTo: 'refund',
+      backupConsent: true, // stale preview selection must be ignored
+    };
+    await expect(service.createPreviewFromChat('ticket', data, null)).resolves.toEqual({ ok: true });
+    expect(savePreview.mock.calls[0][0].dryQuote.provider).toBe('relay');
+    expect(data.backupConsent).toBe(false);
   });
 
   it('does not offer the backup again when an already-selected backup has no route', async () => {
