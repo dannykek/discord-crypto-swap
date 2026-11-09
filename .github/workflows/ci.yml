@@ -34,10 +34,10 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Patch Zod and transitive production dependencies without forcing breaking upgrades
+      - name: Pin patched compatible production dependency versions
         run: |
-          npm install --save-exact zod@4.6.7
-          npm audit fix
+          node --input-type=module -e "import fs from 'node:fs'; const file='package.json'; const p=JSON.parse(fs.readFileSync(file,'utf8')); p.dependencies.zod='4.6.7'; p.overrides={...(p.overrides || {}),axios:'1.20.0','follow-redirects':'1.16.2',undici:'6.29.1'}; fs.writeFileSync(file,JSON.stringify(p,null,2)+'\\n');"
+          npm install --package-lock-only
       - name: Verify lockfile and test code
         run: |
           npm ci
