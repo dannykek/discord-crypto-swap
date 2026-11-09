@@ -357,7 +357,7 @@ function renderPreview(ticket, catalogue, swap) {
         name: 'Network',
         value: `${safeCode(origin?.symbol)} on ${safeCode(networkLabel(origin?.blockchain))} → ${safeCode(destination?.symbol)} on ${safeCode(networkLabel(destination?.blockchain))}`,
       },
-      { name: fixedFloat ? 'Backup provider quoted cost' : 'Network + Spread fee', value: fixedFloat ? quotedRouteCostPercentDisplay(quote) : quotedNetworkAndSpreadFeeDisplay(quote, quoteAppFeeBps(swap.dry_quote)), inline: true },
+      { name: fixedFloat ? 'Quoted swap cost' : 'Network + Spread fee', value: fixedFloat ? quotedRouteCostPercentDisplay(quote) : quotedNetworkAndSpreadFeeDisplay(quote, quoteAppFeeBps(swap.dry_quote)), inline: true },
     );
   const actions = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(componentId(ticket.id, 'confirm')).setLabel('Confirm').setEmoji('✅').setStyle(ButtonStyle.Success),
@@ -407,7 +407,7 @@ function renderActive(ticket, catalogue, swap) {
         name: completed ? 'You received' : 'You receive',
         value: `${completed ? '' : '~'}${safeCode(completed ? settlement.amountOutFormatted : quote.amountOutFormatted)} ${safeCode(destination?.symbol)} (${safeCode(networkLabel(destination?.blockchain))}) at \`${safeCode(swap.recipient)}\``,
       },
-      { name: fixedFloat ? 'Backup provider quoted cost' : 'Network + Spread fee', value: fixedFloat ? quotedRouteCostPercentDisplay(quote) : quotedNetworkAndSpreadFeeDisplay(quote, quoteAppFeeBps(swap.executable_quote)), inline: true },
+      { name: fixedFloat ? 'Quoted swap cost' : 'Network + Spread fee', value: fixedFloat ? quotedRouteCostPercentDisplay(quote) : quotedNetworkAndSpreadFeeDisplay(quote, quoteAppFeeBps(swap.executable_quote)), inline: true },
       { name: ['changenow', 'changelly', 'fixedfloat'].includes(swap.executable_quote?.provider) ? 'Local funding window' : 'Funding deadline', value: `⏰ <t:${deadline}:F> (<t:${deadline}:R>) — do not send after this time.` },
     );
   if (swap.deposit_memo) embed.addFields({ name: 'Memo', value: `\`${safeCode(swap.deposit_memo)}\`` });
