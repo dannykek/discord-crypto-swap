@@ -677,7 +677,7 @@ describe('ticket chat input', () => {
     expect(data.backupConsent).toBe(false);
   });
 
-  it('does not offer the backup again when an already-selected backup has no route', async () => {
+  it('rechecks all providers after a stale backup choice and can offer route notifications', async () => {
     const origin = { assetId: 'ltc', blockchain: 'ltc', symbol: 'LTC', decimals: 8 };
     const destination = { assetId: 'usdt-bsc', blockchain: 'bsc', symbol: 'USDT', decimals: 18 };
     const repositories = {
@@ -716,7 +716,8 @@ describe('ticket chat input', () => {
 
     expect(getVerifiedQuote).toHaveBeenCalledWith(expect.objectContaining({ provider: 'fixedfloat', backupConsent: true }));
     expect(result.userMessage).toBe('No exchange provider has an available quote for LTC → USDT on BNB Chain right now. Try another amount or ask to be notified.');
-    expect(result.userPayload).toEqual({ content: result.userMessage });
+    expect(result.userPayload).toMatchObject({ content: result.userMessage });
+    expect(result.userPayload.components[0].toJSON().components[0].custom_id).toBe('t:ticket:watch-exact');
   });
 });
 
