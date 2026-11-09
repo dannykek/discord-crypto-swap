@@ -18,7 +18,6 @@ import {
   parseUsdAmount,
   toBaseUnits,
   tokenAmountUsd,
-  quotedRouteCostPercentDisplay,
   roundBaseUnitsUpToPrecision,
   usdToBaseUnits,
 } from '../utils/amounts.js';
@@ -800,10 +799,7 @@ export class TicketService {
       return;
     }
 
-    if (['refresh-preview', 'preview-backup', 'preview-main'].includes(action) && interaction.isButton() && ticket.step === 'PREVIEW') {
-      // Switching provider is only ever the owner's explicit choice from the preview.
-      if (action === 'preview-backup') data.backupConsent = true;
-      if (action === 'preview-main') data.backupConsent = false;
+    if (action === 'refresh-preview' && interaction.isButton() && ticket.step === 'PREVIEW') {
       const updated = await this.updateAndRender(interaction, ticket.id, 'QUOTE_LOADING', data, {
         append: false,
         expectedStep: ticket.step,
@@ -1124,12 +1120,11 @@ export class TicketService {
       return { ok: false, userMessage: 'A selected asset is no longer available. Go back and choose the coins again.' };
     }
 
-    // Compare backup pricing without blocking the main provider's quote.
-    // If the main route cannot be quoted, try an actual verified backup quote
-    // transparently, rather than requiring a second 'Use backup' click.
-    const backupOfferPromise = data.backupConsent === true
-      ? Promise.resolve(null)
-      : this.checkBackupOffer(ticketId, originAsset, destinationAsset, data.amountBase);
+    // Compare actual preview quotes for the same input and destination asset.
+    // Pick the greatest destination atomic output, never just the lowest
+    // advertised fee percentage or an unverified indicative estimate.
+    // The final executable quote remains pinned to the selected provider.
+    let backupOfferPromise = Promise.resolve(null);
     let fallbackFailure = null;
     try {
       const parameters = {
@@ -1140,42 +1135,36 @@ export class TicketService {
         recipient: data.recipient,
         refundTo: data.refundTo,
       };
-      let quote;
-      try {
-        quote = await this.oneClick.getVerifiedQuote({
-          ...parameters,
-          provider: data.backupConsent ? 'fixedfloat' : undefined,
-          backupConsent: data.backupConsent === true,
-        });
-      } catch (primaryError) {
-        const initial = this.oneClick.classifyError(primaryError, { operation: 'preview_quote' });
-        if (data.backupConsent || !['AMOUNT_TOO_LOW', 'NO_LIQUIDITY_ROUTE'].includes(initial.code)) throw primaryError;
-        try {
-          quote = await this.oneClick.getVerifiedQuote({ ...parameters, provider: 'fixedfloat', backupConsent: true });
-          // Persist the chosen provider with the preview: confirmation must
-          // use the *same* provider and never switch once deposit is requested.
-          data.backupConsent = true;
-          data.noRouteOffer = null;
-        } catch (backupError) {
-          fallbackFailure = this.oneClick.classifyError(backupError, { operation: 'fixedfloat_quote' });
-          this.logger.warn({
-            ticketId,
-            ...this.oneClick.safeErrorLogFields(backupError, { operation: 'fixedfloat_quote' }),
-          }, 'Backup could not supply a verified quote after the main route failed');
-          throw primaryError;
+      // Old in-flight tickets might carry backupConsent from the prior UI.
+      // Refresh always compares both providers afresh.
+      data.backupConsent = false;
+      const [mainResult, backupResult] = await Promise.allSettled([
+        this.oneClick.getVerifiedQuote(parameters),
+        this.oneClick.fixedFloat?.enabled === false
+          ? Promise.resolve(null)
+          : this.oneClick.getVerifiedQuote({ ...parameters, provider: 'fixedfloat', backupConsent: true }),
+      ]);
+      const main = mainResult.status === 'fulfilled' ? mainResult.value : null;
+      const backup = backupResult.status === 'fulfilled' && backupResult.value?.provider === 'fixedfloat'
+        ? backupResult.value : null;
+      if (backupResult.status === 'rejected') {
+        fallbackFailure = this.oneClick.classifyError(backupResult.reason, { operation: 'fixedfloat_quote' });
+      }
+      if (mainResult.status === 'rejected') {
+        const classified = this.oneClick.classifyError(mainResult.reason, { operation: 'preview_quote' });
+        // Never conceal security/configuration errors by silently changing the route.
+        if (classified.source === 'security' || (backup && !['AMOUNT_TOO_LOW', 'NO_LIQUIDITY_ROUTE'].includes(classified.code))) {
+          throw mainResult.reason;
         }
       }
-      if (quote.provider !== 'fixedfloat') {
-        const backup = await backupOfferPromise;
-        // Main quote is available; keep the optional better-price choice.
-        if (backup?.quote && BigInt(backup.quote.amountOut) > BigInt(quote.quote.amountOut)) {
-          quote.backupOffer = {
-            amountOut: backup.quote.amountOut,
-            amountOutFormatted: backup.quote.amountOutFormatted,
-            cost: quotedRouteCostPercentDisplay(backup.quote),
-          };
-        }
+      const quote = main && backup
+        ? BigInt(backup.quote.amountOut) > BigInt(main.quote.amountOut) ? backup : main
+        : main ?? backup;
+      if (!quote) {
+        backupOfferPromise = this.checkBackupOffer(ticketId, originAsset, destinationAsset, data.amountBase);
+        throw mainResult.status === 'rejected' ? mainResult.reason : backupResult.reason ?? new Error('No verified quotes available');
       }
+      data.backupConsent = quote.provider === 'fixedfloat';
       data.noRouteOffer = null;
       const preview = await this.repositories.savePreview({
         id: randomUUID(),
