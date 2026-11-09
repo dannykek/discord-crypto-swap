@@ -62,7 +62,7 @@ function evmNetworkName(blockchain) {
 export function isReusableChainAddress(value, blockchain) {
   if (typeof value !== 'string') return false;
   const address = value.trim();
-  if (!address || address.length > 200 || /\s|[\x00-\x1f\x7f]/.test(address) || /^\d+$/.test(address)) return false;
+  if (!address || address.length > 200 || /\s/.test(address) || [...address].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) || /^\d+$/.test(address)) return false;
   if (validateKnownAddressFormat(address, blockchain)) return false;
   if (blockchain === 'aptos') return true; // Short 0x addresses are valid on Aptos.
   if (blockchain === 'near' && /^(?:[a-z0-9_-]+\.)*(?:near|testnet)$/.test(address)) return true;
