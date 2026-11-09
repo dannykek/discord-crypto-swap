@@ -274,7 +274,7 @@ export function renderTicket(ticket, catalogue, swap, config, suppliedPolicy = n
 
 function rememberedAddressInstructions(address, network) {
   if (!address) return `Paste any ${network} address as your next message.`;
-  return `Type **\`yes\`** to reuse your last ${network} address:\n\`${safeCode(address)}\`\n\nOr paste any other ${network} address.`;
+  return `Type **\`yes\`** to reuse your ${network} address from a completed swap:\n\`${safeCode(address)}\`\n\nOr paste any other ${network} address.`;
 }
 
 function coinMenu(ticketId, action, coins, emojis, selected, {

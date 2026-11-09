@@ -161,14 +161,14 @@ describe('coin-first ticket component views', () => {
       },
     };
     const address = serialize(renderTicket(addressTicket, catalogue, null, config, policy, emojis));
-    expect(address.embeds[0].description).toContain('Type **`yes`** to reuse your last Ethereum address');
+    expect(address.embeds[0].description).toContain('Type **`yes`** to reuse your Ethereum address from a completed swap');
     expect(address.embeds[0].description).toContain(`0x${'a'.repeat(40)}`);
     expect(address.embeds[0].description).toContain('Ethereum');
 
     const refund = serialize(renderTicket({ ...addressTicket, step: 'REFUND_ADDRESS' }, catalogue, null, config, policy, emojis));
     expect(refund.embeds[0].title).toBe('Refund address required — Litecoin');
     expect(refund.embeds[0].description).toContain('## Send your Litecoin refund address below');
-    expect(refund.embeds[0].description).toContain('Type **`yes`** to reuse your last Litecoin address');
+    expect(refund.embeds[0].description).toContain('Type **`yes`** to reuse your Litecoin address from a completed swap');
     expect(refund.embeds[0].description).toContain('ltc-last-address');
   });
 

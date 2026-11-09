@@ -42,7 +42,7 @@ import { getPopularSwap } from './popular-swaps.js';
 import { buildTranscriptFiles, fetchAllChannelMessages } from './transcript-service.js';
 import { createCompletionRoutePng } from './completion-graphic.js';
 import { completionVouchText } from './completion-presentation.js';
-import { validateKnownAddressFormat } from '../utils/address-validation.js';
+import { isReusableChainAddress, validateKnownAddressFormat } from '../utils/address-validation.js';
 
 const MAX_PRICE_AGE_MS = 30 * 60 * 1000;
 const MAX_ACTIVE_TICKETS_PER_USER = 3;
@@ -134,7 +134,7 @@ export class TicketService {
         });
         const destination = this.catalogue.getAsset(data.destinationAssetId);
         const rememberedRecipientAddress = destination
-          ? await this.repositories.getUserChainAddress(ticket.guild_id, ticket.user_id, destination.blockchain)
+          ? await this.repositories.getUserChainAddress(ticket.guild_id, ticket.user_id, destination.blockchain, 'recipient')
           : null;
         setRememberedAddress(data, 'rememberedRecipientAddress', rememberedRecipientAddress);
         const updated = await this.repositories.updateTicketFlowIfStep(ticket.id, 'USD_AMOUNT', 'RECIPIENT_ADDRESS', data);
@@ -154,12 +154,11 @@ export class TicketService {
         const issue = validateKnownAddressFormat(recipient, destination.blockchain);
         if (issue) throw new UserInputError(`That does not look like a valid ${issue.network} address. Check the receiving network and paste it again.`);
         data.recipient = recipient;
-        data.rememberedRecipientAddress = recipient;
         const origin = this.catalogue.getAsset(data.originAssetId);
         if (!origin) throw new UserInputError('The selected sending asset is no longer available. Go back and choose it again.');
-        const rememberedRefundAddress = origin.blockchain === destination.blockchain
-          ? recipient
-          : await this.repositories.getUserChainAddress(ticket.guild_id, ticket.user_id, origin.blockchain);
+        const rememberedRefundAddress = await this.repositories.getUserChainAddress(
+          ticket.guild_id, ticket.user_id, origin.blockchain, 'refund',
+        );
         setRememberedAddress(data, 'rememberedRefundAddress', rememberedRefundAddress);
         const updated = await this.repositories.updateTicketFlowIfStep(ticket.id, 'RECIPIENT_ADDRESS', 'REFUND_ADDRESS', data);
         if (updated) await this.renderProgress(ticket.id, { append: true });
@@ -174,11 +173,11 @@ export class TicketService {
           ticket,
           origin.blockchain,
           data.rememberedRefundAddress,
+          'refund',
         );
         const issue = validateKnownAddressFormat(refundTo, origin.blockchain);
         if (issue) throw new UserInputError(`That does not look like a valid ${issue.network} address. Check the sending network and paste it again.`);
         data.refundTo = refundTo;
-        data.rememberedRefundAddress = refundTo;
         const updated = await this.repositories.updateTicketFlowIfStep(ticket.id, 'REFUND_ADDRESS', 'QUOTE_LOADING', data);
         if (!updated) return true;
         await this.renderProgress(ticket.id, { append: true });
@@ -231,15 +230,15 @@ export class TicketService {
     return false;
   }
 
-  async resolveAddressInput(value, ticket, blockchain, suggestedAddress) {
+  async resolveAddressInput(value, ticket, blockchain, _suggestedAddress, side = 'recipient') {
     if (!isAddressReuseAnswer(value)) return cleanAddress(value);
-    const rememberedAddress = suggestedAddress ?? await this.repositories.getUserChainAddress(
-      ticket.guild_id,
-      ticket.user_id,
-      blockchain,
+    // Recheck verified history at the moment 'yes' is typed. Never trust a
+    // cached state_data suggestion from a closed/unfinished earlier ticket.
+    const rememberedAddress = await this.repositories.getUserChainAddress(
+      ticket.guild_id, ticket.user_id, blockchain, side,
     );
-    if (!rememberedAddress) {
-      throw new UserInputError('I do not have a saved address for you on this network yet. Paste an address instead.');
+    if (!isReusableChainAddress(rememberedAddress, blockchain)) {
+      throw new UserInputError('I do not have a saved address from a completed swap for you on this network yet. Paste an address instead.');
     }
     return cleanAddress(rememberedAddress);
   }
@@ -1168,9 +1167,6 @@ export class TicketService {
       });
       if (!preview) throw new Error('An executable quote already exists for this ticket.');
       await this.repositories.updateTicketFlowIfStep(ticketId, 'QUOTE_LOADING', 'PREVIEW', data);
-      await this.rememberUserAddresses(ticketId, originAsset, destinationAsset, data).catch((error) => {
-        this.logger.warn({ ticketId, errorName: error.name, operation: 'remember_user_addresses' }, 'Validated wallet addresses could not be remembered');
-      });
       if (!['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(quote.provider)) this.health.oneClickAuthentication = true;
       await this.renderProgress(ticketId);
       return { ok: true };
@@ -1276,23 +1272,6 @@ export class TicketService {
     }
   }
 
-  async rememberUserAddresses(ticketId, originAsset, destinationAsset, data) {
-    const ticket = await this.repositories.getTicket(ticketId);
-    if (!ticket) return false;
-    await this.repositories.saveUserChainAddress(
-      ticket.guild_id,
-      ticket.user_id,
-      destinationAsset.blockchain,
-      data.recipient,
-    );
-    await this.repositories.saveUserChainAddress(
-      ticket.guild_id,
-      ticket.user_id,
-      originAsset.blockchain,
-      data.refundTo,
-    );
-    return true;
-  }
 
   async syncDepositSpeedupMessage(ticket, swap) {
     if (['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap?.executable_quote?.provider)) return;
@@ -1726,9 +1705,9 @@ export class TicketService {
       key = 'rememberedRefundAddress';
     }
     if (!blockchain || !key) return ticket;
-    if (data[key]) return ticket;
-    const rememberedAddress = await this.repositories.getUserChainAddress(ticket.guild_id, ticket.user_id, blockchain);
-    setRememberedAddress(data, key, rememberedAddress);
+    const side = key === 'rememberedRefundAddress' ? 'refund' : 'recipient';
+    const candidate = await this.repositories.getUserChainAddress(ticket.guild_id, ticket.user_id, blockchain, side);
+    setRememberedAddress(data, key, isReusableChainAddress(candidate, blockchain) ? candidate.trim() : null);
     return { ...ticket, state_data: data };
   }
 

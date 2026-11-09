@@ -20,6 +20,13 @@ export function validateKnownAddressFormat(value, blockchain) {
   if (EVM_CHAINS.has(blockchain)) {
     return /^0x[0-9a-fA-F]{40}$/.test(address) ? null : { network: evmNetworkName(blockchain) };
   }
+  if (blockchain === 'ltc') {
+    // Litecoin native base58 (L/M), legacy P2SH (3), or ltc1 segwit formats.
+    // This is a conservative format check, not a proof of wallet ownership.
+    const base58 = new RegExp(`^[LM3]${BASE58}{25,34}$`);
+    const segwit = /^ltc1[ac-hj-np-z02-9]{8,87}$/i;
+    return base58.test(address) || segwit.test(address) ? null : { network: 'Litecoin' };
+  }
   if (blockchain === 'sol') {
     return new RegExp(`^${BASE58}{32,44}$`).test(address) ? null : { network: 'Solana' };
   }
@@ -48,4 +55,16 @@ function evmNetworkName(blockchain) {
     op: 'Optimism',
     pol: 'Polygon',
   }[blockchain] ?? 'EVM';
+}
+
+// A reusable address must be structurally plausible even on chains where
+// comprehensive local checksum validation is not implemented.
+export function isReusableChainAddress(value, blockchain) {
+  if (typeof value !== 'string') return false;
+  const address = value.trim();
+  if (!address || address.length > 200 || /\s/.test(address) || [...address].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) || /^\d+$/.test(address)) return false;
+  if (validateKnownAddressFormat(address, blockchain)) return false;
+  if (blockchain === 'aptos') return true; // Short 0x addresses are valid on Aptos.
+  if (blockchain === 'near' && /^(?:[a-z0-9_-]+\.)*(?:near|testnet)$/.test(address)) return true;
+  return address.length >= 16;
 }
