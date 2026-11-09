@@ -169,6 +169,37 @@ describe('completion vouch claims', () => {
   });
 });
 
+describe('remembering addresses only from completed swaps', () => {
+  it('queries completed swaps, not abandoned preview address cache', async () => {
+    const ltc = 'LKDxGDJq5fF4FohAB8zJH24mDDNHDNtqsE';
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [
+      { address: '100' },
+      { address: 'ltc-not-valid' },
+      { address: ltc },
+    ] }) };
+    const repositories = new Repositories(pool);
+
+    await expect(repositories.getUserChainAddress('guild', 'owner', 'ltc')).resolves.toBe(ltc);
+    const [sql, args] = pool.query.mock.calls[0];
+    expect(sql).toContain("s.status = 'SUCCESS'");
+    expect(sql).toContain('JOIN tickets');
+    expect(sql).toContain('JOIN supported_assets');
+    expect(sql).not.toContain('FROM user_chain_addresses');
+    expect(sql).toContain('s.recipient');
+    expect(args).toEqual(['guild', 'owner', 'ltc', 'recipient']);
+
+    await expect(repositories.getUserChainAddress('guild', 'owner', 'ltc', 'refund')).resolves.toBe(ltc);
+    expect(pool.query.mock.calls[1][1]).toEqual(['guild', 'owner', 'ltc', 'refund']);
+    await expect(repositories.getUserChainAddress('guild', 'owner', 'ltc', 'invalid')).rejects.toThrow();
+  });
+
+  it('offers no address when successful swap history contains only invalid values', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ address: '100' }] }) };
+    const repositories = new Repositories(pool);
+    await expect(repositories.getUserChainAddress('guild', 'owner', 'ltc')).resolves.toBeNull();
+  });
+});
+
 describe('user swap stats', () => {
   it('reads server totals only from this bot and guild', async () => {
     const pool = {
