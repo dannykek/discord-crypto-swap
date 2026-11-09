@@ -364,15 +364,10 @@ function renderPreview(ticket, catalogue, swap) {
     new ButtonBuilder().setCustomId(componentId(ticket.id, 'back')).setLabel('Cancel').setEmoji('❌').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(componentId(ticket.id, 'refresh-preview')).setLabel('Refresh quote').setEmoji('🔄').setStyle(ButtonStyle.Secondary),
   );
-  const backupOffer = !fixedFloat ? swap.dry_quote.backupOffer : null;
-  if (backupOffer) {
-    embed.addFields({
-      name: 'Cheaper with backup provider',
-      value: `Our backup provider currently gives ~${safeCode(backupOffer.amountOutFormatted)} ${safeCode(destination?.symbol)} (${safeCode(backupOffer.cost)} quoted cost). Its rate floats until your deposit confirms.`,
-    });
-    actions.addComponents(new ButtonBuilder().setCustomId(componentId(ticket.id, 'preview-backup')).setLabel('Use backup').setStyle(ButtonStyle.Primary));
-  } else if (fixedFloat) {
-    actions.addComponents(new ButtonBuilder().setCustomId(componentId(ticket.id, 'preview-main')).setLabel('Use main providers').setStyle(ButtonStyle.Secondary));
+  // Providers are automatically ranked by the net destination amount.
+  // No manual 'Use backup' or 'Use main providers' controls are needed.
+  if (fixedFloat) {
+    embed.addFields({ name: 'Rate type', value: 'Floating estimate; final payout may change after deposit confirmation.' });
   }
   if (changeNow && !fixedFloat) embed.addFields({
     name: `${providerName} fallback · floating rate`,
