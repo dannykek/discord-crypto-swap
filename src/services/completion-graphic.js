@@ -8,10 +8,12 @@ const COIN_LOGOS = new Set([
   'btc', 'eth', 'sol', 'ltc', 'usdt', 'usdc', 'bnb', 'pol', 'avax',
   'doge', 'xrp', 'trx', 'sui', 'ada', 'bch', 'zec', 'xlm', 'apt', 'near', 'ton',
 ]);
+const NETWORK_LOGOS = new Set(['arb', 'base', 'op']);
 const CHAIN_BADGES = Object.freeze({
-  btc: 'btc', eth: 'eth', sol: 'sol', ltc: 'ltc', bsc: 'bnb',
-  pol: 'pol', avax: 'avax', doge: 'doge', tron: 'trx', xrp: 'xrp',
-  near: 'near', sui: 'sui', ton: 'ton', stellar: 'xlm', cardano: 'ada',
+  aptos: 'apt', arb: 'arb', avax: 'avax', base: 'base', bch: 'bch', bsc: 'bnb',
+  btc: 'btc', cardano: 'ada', doge: 'doge', eth: 'eth', ltc: 'ltc', near: 'near',
+  op: 'op', pol: 'pol', sol: 'sol', stellar: 'xlm', sui: 'sui', ton: 'ton',
+  tron: 'trx', xrp: 'xrp', zec: 'zec',
 });
 const logoCache = new Map();
 
@@ -69,9 +71,10 @@ function background(png) {
 }
 
 async function getLogo(key) {
-  if (!key || !COIN_LOGOS.has(key)) return null;
+  if (!key || (!COIN_LOGOS.has(key) && !NETWORK_LOGOS.has(key))) return null;
   if (!logoCache.has(key)) {
-    const file = readFile(new URL(`../assets/token-logos/${key}.b64`, import.meta.url), 'utf8')
+    const folder = NETWORK_LOGOS.has(key) ? 'network-logos' : 'token-logos';
+    const file = readFile(new URL(`../assets/${folder}/${key}.b64`, import.meta.url), 'utf8')
       .then((contents) => PNG.sync.read(Buffer.from(contents.trim(), 'base64')))
       .catch(() => null);
     logoCache.set(key, file);
