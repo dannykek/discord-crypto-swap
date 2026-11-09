@@ -168,7 +168,7 @@ describe('coin-first ticket component views', () => {
     const refund = serialize(renderTicket({ ...addressTicket, step: 'REFUND_ADDRESS' }, catalogue, null, config, policy, emojis));
     expect(refund.embeds[0].title).toBe('Refund address required — Litecoin');
     expect(refund.embeds[0].description).toContain('## Send your Litecoin refund address below');
-    expect(refund.embeds[0].description).toContain('Type **`yes`** to reuse your last Litecoin address');
+    expect(refund.embeds[0].description).toContain('Type **`yes`** to reuse your Litecoin address from a completed swap');
     expect(refund.embeds[0].description).toContain('ltc-last-address');
   });
 
