@@ -457,28 +457,34 @@ describe('coin-first ticket component views', () => {
     expect(preview).not.toContain('~1 hour 1 minute');
   });
 
-  it('offers a cheaper backup from the preview and a way back from a backup preview', () => {
+  it('shows only review and refresh buttons because routing is automatic', () => {
     const ticket = { id: randomUUID(), step: 'PREVIEW', state_data: {} };
     const base = {
-      origin_asset_id: assets[5].assetId, destination_asset_id: assets[6].assetId, amount_display: '1', amount_usd_requested: '100.00',
-      recipient: 'recipient', refund_to: 'refund', preview_expires_at: new Date(Date.now() + 60_000),
+      origin_asset_id: assets[5].assetId, destination_asset_id: assets[6].assetId,
+      amount_display: '1', amount_usd_requested: '100.00',
+      recipient: 'recipient', refund_to: 'refund',
+      preview_expires_at: new Date(Date.now() + 60_000),
     };
-    const quote = { amountIn: '100000000', amountInFormatted: '1', amountInUsd: '100', amountOut: '99000000', amountOutFormatted: '99', amountOutUsd: '99.70' };
-    const ids = payload => serialize(payload).components.flatMap(row => row.components.map(button => button.custom_id));
+    const quote = { amountIn: '100000000', amountInFormatted: '1', amountInUsd: '100',
+      amountOut: '99000000', amountOutFormatted: '99', amountOutUsd: '99.70' };
+    const ids = (payload) => serialize(payload).components.flatMap((row) => row.components.map((button) => button.custom_id));
+    const expected = ['confirm', 'back', 'refresh-preview'].map((name) => `t:${ticket.id}:${name}`);
 
-    const main = renderTicket(ticket, catalogue, { ...base, dry_quote: { provider: 'relay', quoteRequest: { appFees: [] }, quote,
-      backupOffer: { amountOut: '99500000', amountOutFormatted: '99.5', cost: '0.40%' } } }, config, policy, emojis);
-    expect(JSON.stringify(serialize(main))).toContain('Cheaper with backup provider');
-    expect(JSON.stringify(serialize(main))).not.toContain('FixedFloat');
-    expect(ids(main)).toContain(`t:${ticket.id}:preview-backup`);
+    const main = renderTicket(ticket, catalogue, { ...base,
+      dry_quote: { provider: 'relay', quoteRequest: { appFees: [] }, quote,
+        backupOffer: { amountOut: '99500000', amountOutFormatted: '99.5', cost: '0.40%' } },
+    }, config, policy, emojis);
+    expect(ids(main)).toEqual(expected);
+    expect(JSON.stringify(serialize(main))).not.toContain('Cheaper with backup provider');
 
-    const plain = renderTicket(ticket, catalogue, { ...base, dry_quote: { provider: 'relay', quoteRequest: { appFees: [] }, quote } }, config, policy, emojis);
-    expect(ids(plain)).not.toContain(`t:${ticket.id}:preview-backup`);
-
-    const backup = renderTicket(ticket, catalogue, { ...base, dry_quote: { provider: 'fixedfloat', quoteRequest: { appFees: [], backupConsent: true }, quote,
-      backupOffer: { amountOut: '1', amountOutFormatted: '1', cost: '1%' } } }, config, policy, emojis);
-    expect(ids(backup)).toContain(`t:${ticket.id}:preview-main`);
-    expect(ids(backup)).not.toContain(`t:${ticket.id}:preview-backup`);
+    const backup = renderTicket(ticket, catalogue, { ...base,
+      dry_quote: { provider: 'fixedfloat', quoteRequest: { appFees: [], backupConsent: true }, quote },
+    }, config, policy, emojis);
+    expect(ids(backup)).toEqual(expected);
+    const previewText = JSON.stringify(serialize(backup));
+    expect(previewText).toContain('Floating estimate');
+    expect(previewText).toContain('Quoted swap cost');
+    expect(previewText).not.toContain('Use main providers');
   });
 
   it('uses a plain service fee for FixedFloat without extra provider disclaimers', () => {
@@ -508,7 +514,7 @@ describe('coin-first ticket component views', () => {
     };
     const preview = serialize(renderTicket(ticket, catalogue, swap, config, policy, emojis));
     const previewText = JSON.stringify(preview);
-    expect(previewText).toContain('Backup provider quoted cost');
+    expect(previewText).toContain('Quoted swap cost');
     expect(previewText).toContain('0.30%');
     expect(previewText).not.toContain('Backup service fee');
     expect(previewText).not.toContain('FixedFloat fallback');
@@ -529,7 +535,7 @@ describe('coin-first ticket component views', () => {
       emojis,
     ));
     const activeText = JSON.stringify(active);
-    expect(activeText).toContain('Backup provider quoted cost');
+    expect(activeText).toContain('Quoted swap cost');
     expect(activeText).toContain('Order ID: YC33JX');
     expect(activeText).not.toContain('"name":"Provider"');
     expect(activeText).not.toContain('floating rate · order');
