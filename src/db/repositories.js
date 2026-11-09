@@ -1,4 +1,5 @@
 import { completedSwapAmountUsd } from '../utils/amounts.js';
+import { isReusableChainAddress } from '../utils/address-validation.js';
 
 export class Repositories {
   constructor(pool) {
@@ -250,31 +251,32 @@ export class Repositories {
     const result = await this.pool.query(
       `SELECT * FROM tickets
        WHERE guild_id = $1 AND user_id = $2 AND state <> 'DELETED'
-       ORDER BY created_at DESC`,
-      [guildId, userId],
-    );
-    return result.rows;
-  }
-
-  async getUserChainAddress(guildId, userId, blockchain) {
+       ORDER BY create  async getUserChainAddress(guildId, userId, blockchain, side = 'recipient') {
+    if (!['recipient', 'refund'].includes(side)) throw new TypeError('Invalid remembered address role.');
+    // Never trust user_chain_addresses: legacy rows could be captured from
+    // abandoned previews, including mistyped amounts such as "100".
+    // Read only addresses from completed swaps for this person and guild.
     const result = await this.pool.query(
-      `SELECT address
-       FROM user_chain_addresses
-       WHERE guild_id = $1 AND user_id = $2 AND blockchain = $3`,
-      [guildId, userId, blockchain],
+      `SELECT CASE WHEN $4 = 'refund' THEN s.refund_to ELSE s.recipient END AS address
+       FROM swaps s
+       JOIN tickets t ON t.id = s.ticket_id
+       JOIN supported_assets a
+         ON a.asset_id = CASE WHEN $4 = 'refund' THEN s.origin_asset_id ELSE s.destination_asset_id END
+       WHERE t.guild_id = $1
+         AND t.user_id = $2
+         AND a.blockchain = $3
+         AND s.status = 'SUCCESS'
+         AND s.executable_quote IS NOT NULL
+       ORDER BY COALESCE(s.terminal_at, s.updated_at) DESC, s.updated_at DESC, s.id DESC
+       LIMIT 100`,
+      [guildId, userId, blockchain, side],
     );
-    return result.rows[0]?.address ?? null;
+    for (const { address } of result.rows) {
+      if (isReusableChainAddress(address, blockchain)) return address.trim();
+    }
+    return null;
   }
-
-  async saveUserChainAddress(guildId, userId, blockchain, address) {
-    const result = await this.pool.query(
-      `INSERT INTO user_chain_addresses (guild_id, user_id, blockchain, address)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (guild_id, user_id, blockchain) DO UPDATE
-       SET address = EXCLUDED.address,
-           updated_at = NOW()
-       RETURNING address`,
-      [guildId, userId, blockchain, address],
+kchain, address],
     );
     return result.rows[0]?.address ?? null;
   }
