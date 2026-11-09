@@ -127,9 +127,12 @@ describe('multi-guild bot runtime', () => {
 
     expect(firstChannel.send).not.toHaveBeenCalled();
     expect(secondChannel.send).toHaveBeenCalledOnce();
-    expect(sendDm).toHaveBeenCalledWith(
-      `Your swap is complete! If you were happy with the service, please leave a vouch in <#${guildConfigs[1].vouchChannelId}>`,
-    );
+    expect(sendDm).toHaveBeenCalledOnce();
+    const receipt = sendDm.mock.calls[0][0];
+    expect(receipt.embeds[0].toJSON().description).toContain('Vouch <@1412664174042943518>');
+    expect(receipt.components[0].toJSON().components[0].url)
+      .toBe(`https://discord.com/channels/${guildConfigs[1].guildId}/${guildConfigs[1].vouchChannelId}`);
+    expect(receipt.allowedMentions).toEqual({ parse: [] });
   });
 
   it('uses the correct ticket category and rejects cross-guild ticket controls', async () => {
