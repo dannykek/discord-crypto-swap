@@ -153,7 +153,7 @@ describe('completed summary reconciliation', () => {
 });
 
 describe('completion vouch claims', () => {
-  it('allows a vouch DM after an independently detected payout message is saved', async () => {
+  it('sends the completion DM only for verified successful swaps', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [{ id: 'swap' }] }) };
     const repositories = new Repositories(pool);
 
@@ -161,10 +161,10 @@ describe('completion vouch claims', () => {
     await repositories.listPendingCompletionVouchDms(new Date(), 25, ['guild']);
 
     expect(pool.query.mock.calls[0][0]).toContain(
-      'payout_detected_at IS NOT NULL AND payout_sent_message_id IS NOT NULL',
+      "AND status = 'SUCCESS'",
     );
     expect(pool.query.mock.calls[1][0]).toContain(
-      's.payout_detected_at IS NOT NULL AND s.payout_sent_message_id IS NOT NULL',
+      "WHERE s.status = 'SUCCESS'",
     );
   });
 });
