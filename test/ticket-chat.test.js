@@ -147,7 +147,7 @@ describe('ticket chat input', () => {
   });
 
   it('hydrates saved addresses for tickets already waiting on an address after restart', async () => {
-    const repositories = { getUserChainAddress: vi.fn().mockResolvedValue('11111111111111111111111111111111') };
+    const repositories = { getUserChainAddress: vi.fn().mockResolvedValue('So11111111111111111111111111111111111111112') };
     const service = makeService({
       repositories,
       assets: [{ assetId: 'sol', symbol: 'SOL', blockchain: 'sol', decimals: 9 }],
@@ -158,7 +158,7 @@ describe('ticket chat input', () => {
     };
 
     await expect(service.withRememberedAddress(ticket)).resolves.toMatchObject({
-      state_data: { rememberedRecipientAddress: '11111111111111111111111111111111' },
+      state_data: { rememberedRecipientAddress: 'So11111111111111111111111111111111111111112' },
     });
     expect(repositories.getUserChainAddress).toHaveBeenCalledWith('guild', 'owner', 'sol', 'recipient');
   });
