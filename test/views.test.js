@@ -407,7 +407,7 @@ describe('coin-first ticket component views', () => {
     };
     const components = completedDealComponents(completed, catalogue).map((row) => row.toJSON());
     expect(components[0].components[0]).toMatchObject({
-      label: 'View payout transaction',
+      label: 'View transaction',
       url: `https://etherscan.io/tx/${hash}`,
     });
     // An origin hash is not a substitute for a destination payout.
