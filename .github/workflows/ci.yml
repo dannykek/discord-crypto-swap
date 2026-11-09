@@ -20,33 +20,5 @@ jobs:
         run: npm ci
       - name: Lint and test
         run: npm run check
-
-  apply-security-updates:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/security/audit-production-deps-2026-11'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - name: Install locked dependencies
-        run: npm ci
-      - name: Pin patched compatible production dependency versions
-        run: |
-          node --input-type=module -e "import fs from 'node:fs'; const file='package.json'; const p=JSON.parse(fs.readFileSync(file,'utf8')); p.dependencies.zod='4.6.7'; p.overrides={...(p.overrides || {}),axios:'1.20.0','follow-redirects':'1.16.2',undici:'6.29.1'}; fs.writeFileSync(file,JSON.stringify(p,null,2));"
-          npm install --package-lock-only
-      - name: Verify lockfile and test code
-        run: |
-          npm ci
-          npm run check
-          npm audit --omit=dev --audit-level=high
-      - name: Commit lockfile updates to security branch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
-          git commit -m "Patch production dependency advisories"
-          git push origin HEAD:security/audit-production-deps-2026-11
+      - name: Fail on high-severity production dependency advisories
+        run: npm audit --omit=dev --audit-level=high
