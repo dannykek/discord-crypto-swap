@@ -116,47 +116,65 @@ describe('completed-deal feed', () => {
     expect(legacyMessage.content).toBe('');
   });
 
-  it('DMs the successful swap owner with the configured vouch channel once', async () => {
-    const completed = swap();
+  it('DMs the successful swap owner the private ticket transcript and exact copyable vouch', async () => {
+    const ownerId = '123456789012345678';
+    const guildId = '1394554081246449807';
+    const vouchChannelId = '1522362740415660113';
+    const completed = { ...swap(), ticket_id: 'ticket', guild_id: guildId };
     const send = vi.fn().mockResolvedValue(undefined);
+    const ticketChannel = {
+      type: ChannelType.GuildText,
+      messages: { fetch: vi.fn().mockResolvedValue(new Map([[
+        'message-id',
+        { id: 'message-id', author: { id: ownerId, username: 'Owner' }, content: 'My swap is complete', embeds: [], attachments: new Map(), createdTimestamp: 1 },
+      ]])) },
+    };
     const repositories = {
-      claimCompletionVouchDm: vi.fn().mockResolvedValue({ ...completed, user_id: 'owner' }),
+      claimCompletionVouchDm: vi.fn().mockResolvedValue(completed),
       completeCompletionVouchDm: vi.fn().mockResolvedValue(undefined),
       failCompletionVouchDm: vi.fn().mockResolvedValue(undefined),
+      getTicket: vi.fn().mockResolvedValue({ id: 'ticket', user_id: ownerId, channel_id: 'channel', state: 'OPEN', created_at: new Date(0) }),
     };
     const service = new TicketService({
-      client: { users: { fetch: vi.fn().mockResolvedValue({ send }) } },
+      client: {
+        users: { fetch: vi.fn().mockResolvedValue({ send }) },
+        channels: { fetch: vi.fn().mockResolvedValue(ticketChannel) },
+      },
       repositories,
-      catalogue: {},
+      catalogue: { getAsset: (id) => id === 'ltc' ? { symbol: 'LTC', blockchain: 'ltc' } : { symbol: 'USDT', blockchain: 'bsc' } },
       coinPolicy: {},
       emojis: {},
       oneClick: {},
       qrService: {},
-      config: { guildId: 'guild', vouchChannelId: '1522362740415660113' },
+      config: { guildId, vouchChannelId },
       health: {},
       logger: { warn: vi.fn() },
     });
 
     await expect(service.notifyCompletionVouch(completed)).resolves.toBe(true);
 
-    expect(send).toHaveBeenCalledWith(
-      'Your swap is complete! If you were happy with the service, please leave a vouch in <#1522362740415660113>',
-    );
+    expect(send).toHaveBeenCalledOnce();
+    const dm = send.mock.calls[0][0];
+    expect(dm.embeds[0].toJSON().description).toContain('Vouch <@1412664174042943518> $100 (LTC → USDT BEP 20)');
+    expect(dm.embeds[0].toJSON().description).toContain('ticket transcript is attached');
+    expect(dm.components[0].toJSON().components[0].url).toBe(`https://discord.com/channels/${guildId}/${vouchChannelId}`);
+    expect(dm.files[0].name).toBe('swap-ticket-ticket.txt');
+    expect(dm.files[0].attachment.toString('utf8')).toContain('My swap is complete');
+    expect(dm.allowedMentions).toEqual({ parse: [] });
     expect(repositories.completeCompletionVouchDm).toHaveBeenCalledWith('swap');
   });
 
-  it('DMs the swap owner before 1Click SUCCESS when an external payout detector finishes it', async () => {
+  it('never solicits a completed-swap vouch for an unconfirmed payout broadcast', async () => {
     const detected = {
       ...swap(),
       status: 'PROCESSING',
       payout_detected_at: new Date('2026-08-11T12:00:00.000Z'),
       payout_sent_message_id: 'payout-message',
     };
-    const send = vi.fn().mockResolvedValue(undefined);
+    const send = vi.fn();
     const repositories = {
-      claimCompletionVouchDm: vi.fn().mockResolvedValue({ ...detected, user_id: 'owner' }),
-      completeCompletionVouchDm: vi.fn().mockResolvedValue(undefined),
-      failCompletionVouchDm: vi.fn().mockResolvedValue(undefined),
+      claimCompletionVouchDm: vi.fn(),
+      completeCompletionVouchDm: vi.fn(),
     };
     const service = new TicketService({
       client: { users: { fetch: vi.fn().mockResolvedValue({ send }) } },
@@ -166,15 +184,14 @@ describe('completed-deal feed', () => {
       emojis: {},
       oneClick: {},
       qrService: {},
-      config: { guildId: 'guild', vouchChannelId: '1522362740415660113' },
+      config: {},
       health: {},
       logger: { warn: vi.fn() },
     });
 
-    await expect(service.notifyCompletionVouch(detected)).resolves.toBe(true);
-
-    expect(send).toHaveBeenCalledOnce();
-    expect(repositories.completeCompletionVouchDm).toHaveBeenCalledWith('swap');
+    await expect(service.notifyCompletionVouch(detected)).resolves.toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    expect(repositories.claimCompletionVouchDm).not.toHaveBeenCalled();
   });
 
   it('posts the payout-sent message once and records its Discord message id', async () => {
