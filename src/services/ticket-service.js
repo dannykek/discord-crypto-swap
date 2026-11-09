@@ -2345,10 +2345,6 @@ function positiveMinimumUsd(value) {
   const amount = Number(cleaned);
   return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
-function fixedFloatOfferQuote(quote) {
-  return quotedRouteCostPercentDisplay(quote);
-}
-
 function popularRouteProbeAmount(originAsset) {
   let amountBase = usdToBaseUnits(POPULAR_ROUTE_PROBE_USD, String(originAsset.price), originAsset.decimals);
   if (isStablecoin(originAsset)) {
