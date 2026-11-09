@@ -2179,7 +2179,7 @@ export class TicketService {
           'Thanks for using **Danny’s Crypto Swap**.\n\n'
           + (files.length ? '📄 **Your private ticket transcript is attached.**\n\n' : '📄 Your ticket transcript is unavailable in this message.\n\n')
           + '**Your copyable vouch message**\n'
-          + `\`\`\n${vouchText}\n\`\`\n`
+          + '```\\n' + vouchText + '\\n```\\n'
           + 'Only post a vouch if you want to share your experience.',
         )
         .setFooter({ text: 'Danny’s Crypto Swap • Completed exchange' });
