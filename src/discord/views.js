@@ -467,7 +467,7 @@ export function depositSpeedupPayload(swap) {
   };
 }
 
-export function completedDealEmbed(swap, catalogue, reference) {
+export function completedDealEmbed(swap, catalogue, reference, { routeGraphic = false } = {}) {
   const origin = catalogue.getAsset(swap.origin_asset_id);
   const destination = catalogue.getAsset(swap.destination_asset_id);
   const settlement = finalizedSettlementAmounts(swap, destination);
@@ -476,8 +476,8 @@ export function completedDealEmbed(swap, catalogue, reference) {
   const fee = fixedFloat
     ? quotedRouteCostPercentDisplay(swap.executable_quote.quote)
     : lowerConsistentNetworkAndSpreadFeeDisplay(settlement, 0);
-  return new EmbedBuilder()
-    .setColor(Colors.Green)
+  const embed = new EmbedBuilder()
+    .setColor(0x43CDA5)
     .setTitle('✅ Deal Complete')
     .setDescription(
       `**${safeCode(settlement.amountInFormatted)} ${safeCode(origin?.symbol)} (${safeCode(networkLabel(origin?.blockchain))}) → ${safeCode(settlement.amountOutFormatted)} ${safeCode(destination?.symbol)} (${safeCode(networkLabel(destination?.blockchain))})**\n`
@@ -485,28 +485,24 @@ export function completedDealEmbed(swap, catalogue, reference) {
     )
     .setThumbnail('attachment://deal-history.gif')
     .setFooter({ text: `Order ${reference.slice(0, 6).toUpperCase()}` });
+  if (routeGraphic) embed.setImage('attachment://swap-route.png');
+  return embed;
 }
 
 export function completedDealComponents(swap, catalogue = null) {
-  const details = swap.last_status_response?.swapDetails ?? {};
-  const transactions = details.originChainTxHashes ?? [];
+  // Only show the verified provider-reported destination payout transaction.
+  // Never fall back to an incoming deposit hash or the origin-chain explorer.
+  if (swap?.status !== 'SUCCESS') return [];
+  const destinationChain = catalogue?.getAsset?.(swap.destination_asset_id)?.blockchain;
+  const transactions = swap.last_status_response?.swapDetails?.destinationChainTxHashes ?? [];
   const link = transactions
-    .map((transaction) => safeExplorerLink(transaction?.explorerUrl))
-    .find(isUnbrandedExplorerLink)
-    ?? depositExplorerLink(swap, transactions, catalogue);
+    .map((transaction) => transactionExplorerUrl(destinationChain, transaction?.hash))
+    .map(safeExplorerLink)
+    .find(Boolean);
   if (!link) return [];
   return [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setLabel('View transaction').setStyle(ButtonStyle.Link).setURL(link.url),
   )];
-}
-
-function depositExplorerLink(swap, transactions, catalogue) {
-  const blockchain = catalogue?.getAsset?.(swap.origin_asset_id)?.blockchain;
-  const hashes = [...transactions.map((transaction) => transaction?.hash), swap.deposit_tx_hash];
-  return hashes
-    .map((hash) => transactionExplorerUrl(blockchain, hash))
-    .map(safeExplorerLink)
-    .find(Boolean) ?? null;
 }
 
 export function statusUpdateEmbed(statusResponse, context = {}) {

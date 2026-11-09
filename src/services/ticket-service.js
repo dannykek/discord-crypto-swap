@@ -6,6 +6,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  EmbedBuilder,
   MessageFlags,
   OverwriteType,
   PermissionFlagsBits,
@@ -39,6 +40,8 @@ import {
 import { networkLabel, OTHER_COIN_KEY } from './coin-policy.js';
 import { getPopularSwap } from './popular-swaps.js';
 import { buildTranscriptFiles, fetchAllChannelMessages } from './transcript-service.js';
+import { createCompletionRoutePng } from './completion-graphic.js';
+import { completionVouchText } from './completion-presentation.js';
 import { validateKnownAddressFormat } from '../utils/address-validation.js';
 
 const MAX_PRICE_AGE_MS = 30 * 60 * 1000;
@@ -1356,11 +1359,15 @@ export class TicketService {
         return true;
       }
 
+      const routeGraphic = await this.createCompletionArtwork(claimed);
       const message = await channel.send({
         ...(attribution ? { content: attribution } : {}),
-        embeds: [completedDealEmbed(claimed, this.catalogue, reference)],
+        embeds: [completedDealEmbed(claimed, this.catalogue, reference, { routeGraphic: Boolean(routeGraphic) })],
         components: completedDealComponents(claimed, this.catalogue),
-        files: [{ attachment: this.completionGif, name: 'deal-history.gif', description: 'Animated deal history' }],
+        files: [
+          { attachment: this.completionGif, name: 'deal-history.gif', description: 'Animated deal history' },
+          ...(routeGraphic ? [{ attachment: routeGraphic, name: 'swap-route.png', description: 'Coins sent and received with their network badges' }] : []),
+        ],
         allowedMentions: { parse: [] },
       });
       await this.repositories.completeCompletionSummary(claimed.id, message.id);
@@ -1386,14 +1393,18 @@ export class TicketService {
         const message = await channel.messages.fetch(swap.completion_summary_message_id).catch(() => null);
         if (!message) continue;
         const reference = createHash('sha256').update(String(swap.id)).digest('hex').slice(0, 12);
-        const embed = completedDealEmbed(swap, this.catalogue, reference);
+        const routeGraphic = await this.createCompletionArtwork(swap);
+        const embed = completedDealEmbed(swap, this.catalogue, reference, { routeGraphic: Boolean(routeGraphic) });
         const components = completedDealComponents(swap, this.catalogue);
         if (completionSummaryIsCurrent(message, embed, components)) continue;
         await message.edit({
           embeds: [embed],
           components,
           attachments: [],
-          files: [{ attachment: this.completionGif, name: 'deal-history.gif', description: 'Animated deal history' }],
+          files: [
+            { attachment: this.completionGif, name: 'deal-history.gif', description: 'Animated deal history' },
+            ...(routeGraphic ? [{ attachment: routeGraphic, name: 'swap-route.png', description: 'Coins sent and received with their network badges' }] : []),
+          ],
           allowedMentions: { parse: [] },
         });
         reconciled += 1;
@@ -1402,6 +1413,18 @@ export class TicketService {
       }
     }
     this.logger.info({ reconciledCompletionSummaryCount: reconciled }, 'Completed-deal summaries reconciled');
+  }
+
+  async createCompletionArtwork(swap) {
+    try {
+      const origin = this.catalogue.getAsset(swap.origin_asset_id);
+      const destination = this.catalogue.getAsset(swap.destination_asset_id);
+      if (!origin || !destination) return null;
+      return await createCompletionRoutePng(origin, destination);
+    } catch (error) {
+      this.logger.warn?.({ swapId: swap.id, errorName: error.name }, 'Completion artwork unavailable; summary text will still be published');
+      return null;
+    }
   }
 
   async getCompletionChannel(guildId = null) {
@@ -2112,27 +2135,65 @@ export class TicketService {
     }
   }
 
-  async notifyCompletionVouch(swap) {
-    const completedOrPayoutDetected = swap?.status === 'SUCCESS' || Boolean(swap?.payout_detected_at);
-    if (!completedOrPayoutDetected || !swap.executable_quote) return false;
-    const requestedGuildConfig = swap.guild_id ? this.guildConfigs.get(swap.guild_id) : null;
-    if (swap.guild_id && !requestedGuildConfig?.vouchChannelId) return false;
+  async customerCompletionTranscript(swap) {
+    const ticket = await this.repositories.getTicket(swap.ticket_id);
+    if (!ticket || ticket.user_id !== swap.user_id || !ticket.channel_id) return [];
+    const channel = await this.client.channels.fetch(ticket.channel_id).catch(() => null);
+    if (!channel || channel.type !== ChannelType.GuildText) return [];
+    const messages = await fetchAllChannelMessages(channel);
+    return buildTranscriptFiles({ ticket, swap, messages });
+  }
 
+  async notifyCompletionVouch(swap) {
+    // An unconfirmed broadcast is not proof of a completed exchange.
+    if (swap?.status !== 'SUCCESS' || !swap.executable_quote) return false;
     const claimed = await this.repositories.claimCompletionVouchDm(
       swap.id,
       new Date(Date.now() - 5 * 60_000),
     );
     if (!claimed) return false;
-    const guildConfig = claimed.guild_id ? this.guildConfigs.get(claimed.guild_id) : requestedGuildConfig;
-    const channelId = guildConfig?.vouchChannelId ?? (!claimed.guild_id ? this.config.vouchChannelId : null);
-    if (!channelId) {
-      await this.repositories.releaseCompletionVouchDm(swap.id).catch(() => null);
-      return false;
-    }
 
     try {
+      const origin = this.catalogue.getAsset(claimed.origin_asset_id);
+      const destination = this.catalogue.getAsset(claimed.destination_asset_id);
+      const vouchText = completionVouchText(claimed, origin, destination);
+      const guildConfig = claimed.guild_id ? this.guildConfigs.get(claimed.guild_id) : null;
+      const guildId = claimed.guild_id ?? this.config.guildId;
+      const channelId = guildConfig?.vouchChannelId ?? (!claimed.guild_id ? this.config.vouchChannelId : null);
+      const vouchLink = /^\d{17,20}$/.test(String(guildId ?? ''))
+        && /^\d{17,20}$/.test(String(channelId ?? ''))
+        ? `https://discord.com/channels/${guildId}/${channelId}`
+        : null;
+
+      let files = [];
+      try {
+        files = await this.customerCompletionTranscript(claimed);
+      } catch (error) {
+        this.logger.warn?.({ swapId: claimed.id, errorName: error.name }, 'Customer transcript could not be attached to completion DM');
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0x9D81F6)
+        .setTitle('✅ Your swap is complete')
+        .setDescription(
+          'Thanks for using **Danny’s Crypto Swap**.\n\n'
+          + (files.length ? '📄 **Your private ticket transcript is attached.**\n\n' : '📄 Your ticket transcript is unavailable in this message.\n\n')
+          + '**Your copyable vouch message**\n'
+          + '```\n' + vouchText + '\n```\n'
+          + 'Only post a vouch if you want to share your experience.',
+        )
+        .setFooter({ text: 'Danny’s Crypto Swap • Completed exchange' });
+      const components = vouchLink
+        ? [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Open vouch channel').setURL(vouchLink),
+        )] : [];
       const user = await this.client.users.fetch(claimed.user_id);
-      await user.send(`Your swap is complete! If you were happy with the service, please leave a vouch in <#${channelId}>`);
+      await user.send({
+        embeds: [embed],
+        components,
+        files,
+        allowedMentions: { parse: [] },
+      });
       await this.repositories.completeCompletionVouchDm(swap.id);
       return true;
     } catch (error) {
@@ -2144,15 +2205,13 @@ export class TicketService {
         userId: claimed.user_id,
         errorName: error.name,
         errorCode: 'COMPLETION_VOUCH_DM_FAILED',
-      }, 'Could not send completion vouch DM');
+      }, 'Could not send completion transcript and vouch DM');
       return false;
     }
   }
 
   getVouchGuildIds() {
-    return [...this.guildConfigs.values()]
-      .filter((guild) => Boolean(guild.vouchChannelId))
-      .map((guild) => guild.guildId);
+    return [...this.guildConfigs.keys()];
   }
 
   async privateReply(interaction, response) {
@@ -2469,6 +2528,9 @@ function completionSummaryIsCurrent(message, desiredEmbed, desiredComponents) {
     && current.description === desired.description
     && current.footer?.text === desired.footer?.text
     && current.thumbnail?.url?.includes('deal-history.gif')
+    && Boolean(current.image?.url?.includes('swap-route.png')) === Boolean(desired.image?.url?.includes('swap-route.png'))
+    && JSON.stringify(current.fields ?? []) === JSON.stringify(desired.fields ?? [])
+    && current.color === desired.color
     && currentUrl === desiredUrl;
 }
 

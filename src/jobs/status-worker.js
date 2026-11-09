@@ -102,7 +102,6 @@ export class StatusWorker {
           }, 'Client role assignment failed; swap processing will continue');
         }
         await this.ticketService.publishCompletionSummary(result.swap);
-        await this.ticketService.notifyCompletionVouch?.(result.swap);
       }
       if (terminal) {
         const ticket = await this.repositories.getTicket(swap.ticket_id);
@@ -122,6 +121,10 @@ export class StatusWorker {
         }
       } else if (result.changed) {
         await this.announceStatus(swap.ticket_id, response, { enabled: announce, swap: result.swap });
+      }
+      // Send the receipt after terminal ticket rendering so the customer transcript includes the closing status.
+      if (response.status === 'SUCCESS' && result.swap) {
+        await this.ticketService.notifyCompletionVouch?.(result.swap);
       }
       if (!terminal && result.swap && !['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap.executable_quote?.provider) && hasDestinationTransaction(response)) {
         await this.ticketService.notifyPayoutSent(result.swap, response).catch((error) => {

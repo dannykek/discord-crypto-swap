@@ -915,10 +915,7 @@ export class Repositories {
          UPDATE swaps
          SET completion_vouch_dm_claimed_at = NOW(), updated_at = NOW()
          WHERE id = $1
-           AND (
-             status = 'SUCCESS'
-             OR (payout_detected_at IS NOT NULL AND payout_sent_message_id IS NOT NULL)
-           )
+           AND status = 'SUCCESS'
            AND executable_quote IS NOT NULL
            AND completion_vouch_dm_sent_at IS NULL
            AND completion_vouch_dm_failed_at IS NULL
@@ -1133,10 +1130,7 @@ export class Repositories {
       `SELECT s.*, t.guild_id
        FROM swaps s
        JOIN tickets t ON t.id = s.ticket_id
-       WHERE (
-           s.status = 'SUCCESS'
-           OR (s.payout_detected_at IS NOT NULL AND s.payout_sent_message_id IS NOT NULL)
-         )
+       WHERE s.status = 'SUCCESS'
          AND s.executable_quote IS NOT NULL
          AND s.completion_vouch_dm_sent_at IS NULL
          AND s.completion_vouch_dm_failed_at IS NULL
