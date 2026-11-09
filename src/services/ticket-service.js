@@ -1218,21 +1218,27 @@ export class TicketService {
     const backupMinimum = backup?.minimum ?? null;
     // An indicative backup offer is not proof that a wallet-specific quote
     // can execute. We already attempted the verified quote before reaching here.
-    const offerRecovery = classification.code === 'NO_LIQUIDITY_ROUTE' && !backupSelected;
+    const addressFailure = ['INVALID_RECIPIENT_ADDRESS', 'INVALID_REFUND_ADDRESS', 'INVALID_WALLET_ADDRESS']
+      .includes(fallbackFailure?.code)
+      ? fallbackFailure : null;
+    const failureCode = addressFailure?.code
+      ?? (classification.code === 'NO_LIQUIDITY_ROUTE'
+        && (fallbackFailure?.code === 'AMOUNT_TOO_LOW' || backupMinimum)
+        ? 'AMOUNT_TOO_LOW' : classification.code);
+    const offerRecovery = failureCode === 'NO_LIQUIDITY_ROUTE' && !backupSelected;
     data.noRouteOffer = offerRecovery ? routeFingerprint(data) : null;
     data.backupConsent = false;
-    const failureCode = classification.code === 'NO_LIQUIDITY_ROUTE'
-      && (fallbackFailure?.code === 'AMOUNT_TOO_LOW' || backupMinimum)
-      ? 'AMOUNT_TOO_LOW' : classification.code;
     await this.repositories.updateTicketFlowIfStep(ticketId, 'QUOTE_LOADING', quoteRecoveryStep(failureCode), data);
     await this.repositories.recordTicketError(ticketId, failureCode, classification.status);
     this.logger.warn({ ticketId, ...this.oneClick.safeErrorLogFields(error, { operation: 'preview_quote' }) }, 'Preview quote request failed');
     await this.renderProgress(ticketId);
-    const userPayload = quoteFailurePayload(ticketId, { ...classification, code: failureCode }, originAsset, destinationAsset, this.coinPolicy, {
-      backupSelected,
-      backupMinimum,
-      fallbackFailure,
-    });
+    const userPayload = addressFailure
+      ? { content: addressFailure.userMessage || 'Please check the receiving and refund addresses, then try again.' }
+      : quoteFailurePayload(ticketId, { ...classification, code: failureCode }, originAsset, destinationAsset, this.coinPolicy, {
+        backupSelected,
+        backupMinimum,
+        fallbackFailure,
+      });
     await this.replyToTicketMessage(sourceMessage, userPayload);
     return { ok: false, userMessage: userPayload.content, userPayload };
   }
