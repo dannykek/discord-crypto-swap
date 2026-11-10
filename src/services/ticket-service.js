@@ -502,7 +502,7 @@ export class TicketService {
     }
     if (interaction.isButton?.() && typeof interaction.customId === 'string'
       && interaction.customId.startsWith('lb:p:')) {
-      const match = /^lb:p:(0|[1-9]\\d{0,6})$/.exec(interaction.customId);
+      const match = /^lb:p:(0|[1-9]\d{0,6})$/.exec(interaction.customId);
       if (!match) {
         await this.privateReply(interaction, 'This leaderboard control is invalid. Run /leaderboard again.');
         return true;
