@@ -85,7 +85,7 @@ describe('user swap stats', () => {
       isChatInputCommand: () => true,
       commandName: 'stats',
       guildId: 'guild',
-      user: { id: 'user', username: 'Requester' },
+      user: { id: 'user', username: 'Requester', displayAvatarURL: vi.fn().mockReturnValue('https://cdn.discordapp.com/avatars/user/profile.png') },
       options: { getUser: vi.fn().mockReturnValue(null) },
       deferReply: vi.fn().mockResolvedValue(undefined),
       editReply: vi.fn().mockResolvedValue(undefined),
@@ -99,9 +99,15 @@ describe('user swap stats', () => {
       includeAmountUsd: null,
     });
     const embed = interaction.editReply.mock.calls[0][0].embeds[0].toJSON();
-    expect(embed.title).toBe("Requester's swap stats");
-    expect(embed.fields).toContainEqual({ name: 'Total exchanged', value: '$12,500.50', inline: true });
-    expect(embed.fields).toContainEqual({ name: 'Fees saved vs. 1%', value: '$125.01', inline: true });
+    expect(embed.title).toBe("✦ Requester's Swap Stats");
+    expect(embed.thumbnail.url).toBe('https://cdn.discordapp.com/avatars/user/profile.png');
+    expect(interaction.user.displayAvatarURL).toHaveBeenCalledWith({ extension: 'png', size: 256 });
+    expect(embed.fields).toEqual([
+      { name: 'Total exchanged', value: '**$12,500.50**', inline: false },
+      { name: 'Fees saved vs. 1%', value: '**$125.01**', inline: true },
+      { name: 'Completed swaps', value: '**4**', inline: true },
+    ]);
+    expect(embed.footer.text).toContain('Danny’s Crypto Swap');
   });
 
   it('allows /stats to show another Discord user', async () => {
@@ -110,13 +116,20 @@ describe('user swap stats', () => {
       client: {}, repositories, catalogue: {}, coinPolicy: {}, emojis: {}, oneClick: {}, qrService: {},
       config: { guildId: 'guild' }, health: {}, logger: {},
     });
-    const selectedUser = { id: 'other-user', username: 'SomeoneElse' };
+    const selectedUser = {
+      id: 'other-user',
+      username: 'SomeoneElse',
+      displayAvatarURL: vi.fn().mockReturnValue('https://cdn.discordapp.com/avatars/other-user/global.png'),
+    };
+    const selectedMember = {
+      displayAvatarURL: vi.fn().mockReturnValue('https://cdn.discordapp.com/guilds/guild/users/other-user/avatars/server.png'),
+    };
     const interaction = {
       isChatInputCommand: () => true,
       commandName: 'stats',
       guildId: 'guild',
       user: { id: 'requester', username: 'Requester' },
-      options: { getUser: vi.fn().mockReturnValue(selectedUser) },
+      options: { getUser: vi.fn().mockReturnValue(selectedUser), getMember: vi.fn().mockReturnValue(selectedMember) },
       deferReply: vi.fn().mockResolvedValue(undefined),
       editReply: vi.fn().mockResolvedValue(undefined),
     };
@@ -127,7 +140,11 @@ describe('user swap stats', () => {
       includeSwapId: null,
       includeAmountUsd: null,
     });
-    expect(interaction.editReply.mock.calls[0][0].embeds[0].toJSON().title).toBe("SomeoneElse's swap stats");
+    const embed = interaction.editReply.mock.calls[0][0].embeds[0].toJSON();
+    expect(embed.title).toBe("✦ SomeoneElse's Swap Stats");
+    expect(embed.thumbnail.url).toBe('https://cdn.discordapp.com/guilds/guild/users/other-user/avatars/server.png');
+    expect(selectedMember.displayAvatarURL).toHaveBeenCalledWith({ extension: 'png', size: 256 });
+    expect(selectedUser.displayAvatarURL).not.toHaveBeenCalled();
   });
 
   it('renders a server top-five leaderboard publicly', async () => {
@@ -176,10 +193,22 @@ describe('user swap stats', () => {
     expect(payload.allowedMentions).toEqual({ parse: [] });
   });
 
-  it('omits scope copy and the footer from the stats response', () => {
+  it('has a clean branded footer and degrades safely without an avatar', () => {
     const embed = userStatsPayload(stats).embeds[0].toJSON();
+    expect(embed.title).toBe('✦ Swap Stats');
     expect(embed).not.toHaveProperty('description');
-    expect(embed).not.toHaveProperty('footer');
+    expect(embed).not.toHaveProperty('thumbnail');
+    expect(embed.footer.text).toBe('Danny’s Crypto Swap • Completed exchanges');
+  });
+
+  it('uses the selected user avatar when a guild-specific avatar is unavailable', () => {
+    const user = {
+      username: 'Example',
+      displayAvatarURL: vi.fn().mockReturnValue('https://cdn.discordapp.com/avatars/123/avatar.png'),
+    };
+    const embed = userStatsPayload(null, user).embeds[0].toJSON();
+    expect(embed.thumbnail.url).toBe('https://cdn.discordapp.com/avatars/123/avatar.png');
+    expect(embed.fields.map((field) => field.value)).toEqual(['**$0.00**', '**$0.00**', '**0**']);
   });
 
   it('shows an empty leaderboard cleanly', () => {
