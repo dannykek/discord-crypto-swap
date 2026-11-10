@@ -673,17 +673,24 @@ export function payoutClosingPayload(userId, swap, statusResponse, catalogue, ti
   return payload;
 }
 
-export function userStatsPayload(userStats, user = null) {
+export function userStatsPayload(userStats, user = null, { avatarURL = null } = {}) {
   const stats = normalizedUserStats(userStats);
   const displayName = safeUserDisplayName(user);
+  // Discord user or guild-member avatars are supplied by Discord's API.
+  // Fall back to no thumbnail when the user object has no usable avatar URL.
+  const userAvatar = avatarURL ?? user?.displayAvatarURL?.({ extension: 'png', size: 256 });
   const embed = new EmbedBuilder()
-    .setColor(Colors.Blurple)
-    .setTitle(displayName ? `${displayName}'s swap stats` : 'Swap stats')
+    .setColor(0x9892E8)
+    .setTitle(displayName ? `✦ ${displayName}'s Swap Stats` : '✦ Swap Stats')
     .addFields(
-      { name: 'Total exchanged', value: formatUsd(stats.totalAmountUsd), inline: true },
-      { name: 'Fees saved vs. 1%', value: formatUsd(stats.feesSavedUsd), inline: true },
-      { name: 'Completed swaps', value: stats.completedSwapCount, inline: true },
-    );
+      { name: 'Total exchanged', value: `**${formatUsd(stats.totalAmountUsd)}**`, inline: false },
+      { name: 'Fees saved vs. 1%', value: `**${formatUsd(stats.feesSavedUsd)}**`, inline: true },
+      { name: 'Completed swaps', value: `**${stats.completedSwapCount}**`, inline: true },
+    )
+    .setFooter({ text: 'Danny’s Crypto Swap • Completed exchanges' });
+  if (typeof userAvatar === 'string' && /^https:\/\//i.test(userAvatar)) {
+    embed.setThumbnail(userAvatar);
+  }
   return { embeds: [embed], components: [] };
 }
 
