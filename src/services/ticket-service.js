@@ -564,9 +564,14 @@ export class TicketService {
       return;
     }
     const targetUser = interaction.options?.getUser?.('user') ?? interaction.user;
+    const targetMember = interaction.options?.getMember?.('user')
+      ?? (targetUser.id === interaction.user.id ? interaction.member : null);
+    const avatarURL = targetMember?.displayAvatarURL?.({ extension: 'png', size: 256 })
+      ?? targetUser.displayAvatarURL?.({ extension: 'png', size: 256 })
+      ?? null;
     const stats = await this.getUserSwapStats(interaction.guildId, targetUser.id);
     await interaction.editReply({
-      ...userStatsPayload(stats, targetUser),
+      ...userStatsPayload(stats, targetUser, { avatarURL }),
       allowedMentions: { parse: [] },
     });
   }
