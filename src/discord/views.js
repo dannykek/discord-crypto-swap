@@ -694,20 +694,41 @@ export function userStatsPayload(userStats, user = null, { avatarURL = null } = 
   return { embeds: [embed], components: [] };
 }
 
-export function leaderboardPayload(entries) {
-  const rows = entries.slice(0, 5).map((entry, index) => {
+export function leaderboardPayload(entries, { page = 0, pages = 1, total = entries.length, pageSize = 5 } = {}) {
+  const medals = ['🥇', '🥈', '🥉'];
+  const rows = entries.slice(0, pageSize).map((entry, index) => {
+    const rank = page * pageSize + index + 1;
     const name = safeUserMention(entry.user_id);
     const count = String(entry.completed_swap_count ?? '0');
-    const swapLabel = count === '1' ? 'swap' : 'swaps';
-    return `**${index + 1}. ${name}**\n${formatUsd(entry.total_amount_usd)} exchanged • ${safeCode(count)} ${swapLabel}`;
+    const swaps = count === '1' ? 'swap' : 'swaps';
+    const marker = medals[rank - 1] ?? `**#${rank}**`;
+    return `${marker}  **${name}**\n> 💱 **${formatUsd(entry.total_amount_usd)}** exchanged  ·  ${safeCode(count)} ${swaps}`;
   });
   const embed = new EmbedBuilder()
-    .setColor(Colors.Gold)
-    .setTitle('Server swap leaderboard')
+    .setColor(0x9892E8)
+    .setTitle('✦ Server Swap Leaderboard')
     .setDescription(rows.length > 0
-      ? rows.join('\n\n')
-      : 'No completed swaps have been recorded yet.');
-  return { embeds: [embed], components: [] };
+      ? '**Top exchangers by total USD volume**\n\n' + rows.join('\n\n')
+      : 'No completed swaps have been recorded yet.')
+    .setFooter({
+      text: `Page ${page + 1} of ${pages}  •  ${total} ${total === 1 ? 'member' : 'members'} ranked  •  Danny’s Crypto Swap`,
+    });
+  const components = pages > 1
+    ? [new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`lb:p:${Math.max(0, page - 1)}`)
+        .setLabel('Previous')
+        .setEmoji('◀️')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page <= 0),
+      new ButtonBuilder()
+        .setCustomId(`lb:p:${Math.min(pages - 1, page + 1)}`)
+        .setLabel('Next')
+        .setEmoji('▶️')
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(page >= pages - 1),
+    )] : [];
+  return { embeds: [embed], components };
 }
 
 function normalizedUserStats(userStats) {
