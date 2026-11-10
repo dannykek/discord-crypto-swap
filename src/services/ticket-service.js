@@ -500,6 +500,25 @@ export class TicketService {
       }
       return false;
     }
+    if (interaction.isButton?.() && typeof interaction.customId === 'string'
+      && interaction.customId.startsWith('lb:p:')) {
+      const match = /^lb:p:(0|[1-9]\\d{0,6})$/.exec(interaction.customId);
+      if (!match) {
+        await this.privateReply(interaction, 'This leaderboard control is invalid. Run /leaderboard again.');
+        return true;
+      }
+      if (!interaction.guildId || !this.guildConfigs.has(interaction.guildId)) {
+        await this.privateReply(interaction, 'The swap leaderboard is not configured for this server.');
+        return true;
+      }
+      await interaction.deferUpdate();
+      const leaderboard = await this.repositories.getUserSwapLeaderboardPage(interaction.guildId, Number(match[1]), 5);
+      await interaction.editReply({
+        ...leaderboardPayload(leaderboard.entries, leaderboard),
+        allowedMentions: { parse: [] },
+      });
+      return true;
+    }
     if (interaction.isButton() && interaction.customId === 'panel:start') {
       await this.startTicket(interaction);
       return true;
@@ -582,9 +601,9 @@ export class TicketService {
       await interaction.editReply('The swap leaderboard is not configured for this server.');
       return;
     }
-    const entries = await this.repositories.listUserSwapLeaderboard(interaction.guildId, 5);
+    const leaderboard = await this.repositories.getUserSwapLeaderboardPage(interaction.guildId, 0, 5);
     await interaction.editReply({
-      ...leaderboardPayload(entries),
+      ...leaderboardPayload(leaderboard.entries, leaderboard),
       allowedMentions: { parse: [] },
     });
   }
