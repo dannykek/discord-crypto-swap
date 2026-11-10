@@ -147,7 +147,7 @@ describe('user swap stats', () => {
     expect(selectedUser.displayAvatarURL).not.toHaveBeenCalled();
   });
 
-  it('renders a server top-five leaderboard publicly', async () => {
+  it('renders the first server leaderboard page with purple styling and navigation', async () => {
     const userIds = [
       '100000000000000001',
       '100000000000000002',
@@ -156,13 +156,16 @@ describe('user swap stats', () => {
       '100000000000000005',
       '100000000000000006',
     ];
-    const entries = Array.from({ length: 6 }, (_, index) => ({
+    const entries = Array.from({ length: 5 }, (_, index) => ({
       user_id: userIds[index],
       completed_swap_count: String(6 - index),
       total_amount_usd: String((6 - index) * 1000),
-      fees_saved_usd: String((6 - index) * 10),
     }));
-    const repositories = { listUserSwapLeaderboard: vi.fn().mockResolvedValue(entries) };
+    const repositories = {
+      getUserSwapLeaderboardPage: vi.fn().mockResolvedValue({
+        entries, total: 6, page: 0, pages: 2, pageSize: 5,
+      }),
+    };
     const service = new TicketService({
       client: {},
       repositories,
@@ -180,17 +183,80 @@ describe('user swap stats', () => {
 
     await expect(service.handleInteraction(interaction)).resolves.toBe(true);
 
-    expect(interaction.deferReply).toHaveBeenCalledWith();
-    expect(repositories.listUserSwapLeaderboard).toHaveBeenCalledWith('guild', 5);
+    expect(repositories.getUserSwapLeaderboardPage).toHaveBeenCalledWith('guild', 0, 5);
     const payload = interaction.editReply.mock.calls[0][0];
     const embed = payload.embeds[0].toJSON();
-    expect(embed.title).toBe('Server swap leaderboard');
-    expect(embed.description).toContain('1. <@100000000000000001>');
-    expect(embed.description).toContain('$6,000.00 exchanged');
-    expect(embed.description).not.toContain('saved vs. 1%');
-    expect(embed.description).not.toContain('<@100000000000000006>');
-    expect(embed).not.toHaveProperty('footer');
+    expect(embed.title).toBe('✦ Server Swap Leaderboard');
+    expect(embed.color).toBe(0x9892E8);
+    expect(embed.description).toContain('🥇');
+    expect(embed.description).toContain('<@100000000000000001>');
+    expect(embed.description).toContain('$6,000.00');
+    expect(embed.description).toContain('🥉');
+    expect(embed.description).toContain('**#4**');
+    expect(embed.description).not.toContain('Fees saved');
+    expect(embed.footer.text).toContain('Page 1 of 2');
     expect(payload.allowedMentions).toEqual({ parse: [] });
+    const buttons = payload.components[0].toJSON().components;
+    expect(buttons.map((button) => button.custom_id)).toEqual(['lb:p:0', 'lb:p:1']);
+    expect(buttons.map((button) => button.disabled)).toEqual([true, false]);
+  });
+
+  it('allows anyone in the configured server to page through the entire leaderboard', async () => {
+    const entries = Array.from({ length: 5 }, (_, index) => ({
+      user_id: `1000000000000000${index + 11}`,
+      total_amount_usd: String(1000 - index * 10),
+      completed_swap_count: String(10 - index),
+    }));
+    const repositories = {
+      getUserSwapLeaderboardPage: vi.fn().mockResolvedValue({
+        entries, total: 12, page: 1, pages: 3, pageSize: 5,
+      }),
+    };
+    const service = new TicketService({
+      client: {}, repositories, catalogue: {}, coinPolicy: {}, emojis: {},
+      oneClick: {}, qrService: {}, config: { guildId: 'guild' }, health: {}, logger: {},
+    });
+    const interaction = {
+      isChatInputCommand: () => false,
+      isButton: () => true,
+      customId: 'lb:p:1',
+      guildId: 'guild',
+      user: { id: 'another-member' },
+      deferUpdate: vi.fn().mockResolvedValue(undefined),
+      editReply: vi.fn().mockResolvedValue(undefined),
+    };
+    await expect(service.handleInteraction(interaction)).resolves.toBe(true);
+    expect(interaction.deferUpdate).toHaveBeenCalledOnce();
+    expect(repositories.getUserSwapLeaderboardPage).toHaveBeenCalledWith('guild', 1, 5);
+    const payload = interaction.editReply.mock.calls[0][0];
+    const embed = payload.embeds[0].toJSON();
+    expect(embed.description).toContain('**#6**');
+    expect(embed.description).toContain('**#10**');
+    expect(embed.footer.text).toContain('Page 2 of 3');
+    const buttons = payload.components[0].toJSON().components;
+    expect(buttons.map((button) => button.custom_id)).toEqual(['lb:p:0', 'lb:p:2']);
+    expect(buttons.every((button) => !button.disabled)).toBe(true);
+  });
+
+  it('rejects invalid buttons and does not serve another guilds leaderboard', async () => {
+    const repositories = { getUserSwapLeaderboardPage: vi.fn() };
+    const service = new TicketService({
+      client: {}, repositories, catalogue: {}, coinPolicy: {}, emojis: {},
+      oneClick: {}, qrService: {}, config: { guildId: 'guild' }, health: {}, logger: {},
+    });
+    service.privateReply = vi.fn();
+    const badPage = {
+      isChatInputCommand: () => false, isButton: () => true,
+      customId: 'lb:p:not-a-number', guildId: 'guild',
+    };
+    await expect(service.handleInteraction(badPage)).resolves.toBe(true);
+    expect(service.privateReply).toHaveBeenCalledOnce();
+    expect(repositories.getUserSwapLeaderboardPage).not.toHaveBeenCalled();
+    service.privateReply.mockClear();
+    const otherGuild = { ...badPage, customId: 'lb:p:1', guildId: 'other-guild' };
+    await expect(service.handleInteraction(otherGuild)).resolves.toBe(true);
+    expect(service.privateReply).toHaveBeenCalledOnce();
+    expect(repositories.getUserSwapLeaderboardPage).not.toHaveBeenCalled();
   });
 
   it('has a clean branded footer and degrades safely without an avatar', () => {
@@ -211,8 +277,17 @@ describe('user swap stats', () => {
     expect(embed.fields.map((field) => field.value)).toEqual(['**$0.00**', '**$0.00**', '**0**']);
   });
 
-  it('shows an empty leaderboard cleanly', () => {
-    const embed = leaderboardPayload([]).embeds[0].toJSON();
+  it('shows an empty leaderboard cleanly and disables navigation on a single page', () => {
+    const payload = leaderboardPayload([], { page: 0, pages: 1, total: 0, pageSize: 5 });
+    const embed = payload.embeds[0].toJSON();
     expect(embed.description).toContain('No completed swaps');
+    expect(embed.footer.text).toContain('Page 1 of 1');
+    expect(payload.components).toEqual([]);
+    const lastPage = leaderboardPayload([{
+      user_id: '100000000000000020', completed_swap_count: '2', total_amount_usd: '55',
+    }], { page: 2, pages: 3, total: 11, pageSize: 5 });
+    const buttons = lastPage.components[0].toJSON().components;
+    expect(buttons.map((button) => button.disabled)).toEqual([false, true]);
+    expect(lastPage.embeds[0].toJSON().description).toContain('**#11**');
   });
 });

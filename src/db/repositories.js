@@ -1284,6 +1284,31 @@ export class Repositories {
     return aggregateUserSwapLeaderboard(this.pool, guildId, normalizedLimit);
   }
 
+  async getUserSwapLeaderboardPage(guildId, page = 0, pageSize = 5) {
+    const size = Number.isInteger(pageSize) && pageSize > 0 ? Math.min(pageSize, 10) : 5;
+    const requested = Number.isSafeInteger(page) && page >= 0 ? page : 0;
+    // Count users first so stale/forged page buttons cannot create
+    // excessively large offsets and the last page stays accessible.
+    const countResult = await this.pool.query(
+      `SELECT COUNT(*)::TEXT AS total
+       FROM (
+         SELECT user_id
+         FROM user_swap_stats
+         WHERE guild_id = $1
+         GROUP BY user_id
+         HAVING SUM(total_amount_usd) > 0
+       ) ranked`,
+      [guildId],
+    );
+    const total = Math.max(0, Number(countResult.rows[0]?.total ?? 0));
+    const pages = Math.max(1, Math.ceil(total / size));
+    const currentPage = Math.min(requested, pages - 1);
+    const entries = total > 0
+      ? await aggregateUserSwapLeaderboard(this.pool, guildId, size, currentPage * size)
+      : [];
+    return { entries, total, page: currentPage, pageSize: size, pages };
+  }
+
   async scheduleSwapRetry(swapId, nextPollAt, errorCode) {
     await this.pool.query(
       `UPDATE swaps
@@ -1401,7 +1426,8 @@ async function aggregateUserSwapStats(queryable, guildId, userId) {
   return result.rows[0] ?? emptyUserSwapStats();
 }
 
-async function aggregateUserSwapLeaderboard(queryable, guildId, limit) {
+async function aggregateUserSwapLeaderboard(queryable, guildId, limit, offset = null) {
+  const paginated = offset !== null;
   const result = await queryable.query(
     `SELECT user_id,
             SUM(completed_swap_count)::TEXT AS completed_swap_count,
@@ -1412,8 +1438,8 @@ async function aggregateUserSwapLeaderboard(queryable, guildId, limit) {
      GROUP BY user_id
      HAVING SUM(total_amount_usd) > 0
      ORDER BY SUM(total_amount_usd) DESC, SUM(completed_swap_count) DESC, user_id
-     LIMIT $2`,
-    [guildId, limit],
+     LIMIT $2${paginated ? ' OFFSET $3' : ''}`,
+    paginated ? [guildId, limit, offset] : [guildId, limit],
   );
   return result.rows;
 }

@@ -222,6 +222,50 @@ describe('user swap stats', () => {
     expect(pool.query.mock.calls[0][1]).toEqual(['user', 'current-guild']);
   });
 
+  it('paginates every server member by exchanged USD, preserving rank order', async () => {
+    const rows = [{ user_id: 'sixth', total_amount_usd: '800', completed_swap_count: '8' }];
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ total: '12' }] })
+        .mockResolvedValueOnce({ rows }),
+    };
+    const repositories = new Repositories(pool);
+
+    await expect(repositories.getUserSwapLeaderboardPage('guild', 1, 5)).resolves.toEqual({
+      entries: rows, total: 12, page: 1, pageSize: 5, pages: 3,
+    });
+
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(pool.query.mock.calls[0][0]).toContain('HAVING SUM(total_amount_usd) > 0');
+    expect(pool.query.mock.calls[0][1]).toEqual(['guild']);
+    expect(pool.query.mock.calls[1][0]).toContain('ORDER BY SUM(total_amount_usd) DESC');
+    expect(pool.query.mock.calls[1][0]).toContain('SUM(completed_swap_count) DESC, user_id');
+    expect(pool.query.mock.calls[1][0]).toContain('OFFSET $3');
+    expect(pool.query.mock.calls[1][1]).toEqual(['guild', 5, 5]);
+  });
+
+  it('clamps stale or enormous page requests to the last valid page', async () => {
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ total: '11' }] })
+        .mockResolvedValueOnce({ rows: [{ user_id: 'last' }] }),
+    };
+    const repositories = new Repositories(pool);
+    const result = await repositories.getUserSwapLeaderboardPage('guild', 999999, 5);
+    expect(result.page).toBe(2);
+    expect(result.pages).toBe(3);
+    expect(pool.query.mock.calls[1][1]).toEqual(['guild', 5, 10]);
+  });
+
+  it('shows an empty leaderboard without requesting a nonexistent SQL page', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ total: '0' }] }) };
+    const repositories = new Repositories(pool);
+    await expect(repositories.getUserSwapLeaderboardPage('guild', 400, 5)).resolves.toEqual({
+      entries: [], total: 0, page: 0, pages: 1, pageSize: 5,
+    });
+    expect(pool.query).toHaveBeenCalledOnce();
+  });
+
   it('orders the server leaderboard by total exchanged value', async () => {
     const rows = [{ user_id: 'top', total_amount_usd: '10000' }];
     const pool = {
