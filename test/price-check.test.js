@@ -99,7 +99,7 @@ describe('private panel price checks', () => {
     expect(preset).toMatchObject({
       originCoin: 'USDT', originAssetId: SOURCE_ID, destinationCoin: 'LTC',
       destinationAssetId: DESTINATION_ID, amountBase: '1000000000000000000',
-      amountDisplay: '1', amountUsdRequested: '1',
+      amountDisplay: '1', amountUsdRequested: '1.00',
     });
     expect(preset).not.toHaveProperty('recipient');
     expect(preset).not.toHaveProperty('refundTo');
