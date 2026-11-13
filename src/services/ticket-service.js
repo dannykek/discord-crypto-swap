@@ -2162,15 +2162,6 @@ export class TicketService {
     }
   }
 
-  async customerCompletionTranscript(swap) {
-    const ticket = await this.repositories.getTicket(swap.ticket_id);
-    if (!ticket || ticket.user_id !== swap.user_id || !ticket.channel_id) return [];
-    const channel = await this.client.channels.fetch(ticket.channel_id).catch(() => null);
-    if (!channel || channel.type !== ChannelType.GuildText) return [];
-    const messages = await fetchAllChannelMessages(channel);
-    return buildTranscriptFiles({ ticket, swap, messages });
-  }
-
   async notifyCompletionVouch(swap) {
     // An unconfirmed broadcast is not proof of a completed exchange.
     if (swap?.status !== 'SUCCESS' || !swap.executable_quote) return false;
@@ -2192,19 +2183,11 @@ export class TicketService {
         ? `https://discord.com/channels/${guildId}/${channelId}`
         : null;
 
-      let files = [];
-      try {
-        files = await this.customerCompletionTranscript(claimed);
-      } catch (error) {
-        this.logger.warn?.({ swapId: claimed.id, errorName: error.name }, 'Customer transcript could not be attached to completion DM');
-      }
-
       const embed = new EmbedBuilder()
         .setColor(0x9D81F6)
         .setTitle('✅ Your swap is complete')
         .setDescription(
           'Thanks for using **Danny’s Crypto Swap**.\n\n'
-          + (files.length ? '📄 **Your private ticket transcript is attached.**\n\n' : '📄 Your ticket transcript is unavailable in this message.\n\n')
           + '**Your copyable vouch message**\n'
           + '```\n' + vouchText + '\n```\n'
           + 'Only post a vouch if you want to share your experience.',
@@ -2218,7 +2201,6 @@ export class TicketService {
       await user.send({
         embeds: [embed],
         components,
-        files,
         allowedMentions: { parse: [] },
       });
       await this.repositories.completeCompletionVouchDm(swap.id);
@@ -2232,7 +2214,7 @@ export class TicketService {
         userId: claimed.user_id,
         errorName: error.name,
         errorCode: 'COMPLETION_VOUCH_DM_FAILED',
-      }, 'Could not send completion transcript and vouch DM');
+      }, 'Could not send completion vouch DM');
       return false;
     }
   }
