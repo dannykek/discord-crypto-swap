@@ -247,7 +247,7 @@ describe('ticket chat input', () => {
     };
     const swap = {
       id: 'swap', ticket_id: 'ticket', status: 'PENDING_DEPOSIT', executable_quote: { quote: {} },
-      deposit_address: 'deposit-address', deposit_memo: null, deposit_tx_hash: null,
+      origin_asset_id: 'usdt-bsc', deposit_address: 'deposit-address', deposit_memo: null, deposit_tx_hash: null,
     };
     const saved = { ...swap, deposit_tx_hash: transactionId };
     const repositories = {
@@ -261,7 +261,7 @@ describe('ticket chat input', () => {
       safeErrorLogFields: vi.fn().mockReturnValue({ errorCode: 'NONE' }),
     };
     const health = { oneClickAuthentication: false };
-    const service = makeService({ repositories, oneClick, health });
+    const service = makeService({ repositories, oneClick, health, assets: [{ assetId: 'usdt-bsc', blockchain: 'bsc' }] });
     service.renderProgress = vi.fn().mockResolvedValue(undefined);
     const statusWorker = { refreshSwap: vi.fn().mockResolvedValue(saved) };
     service.setStatusWorker(statusWorker);
@@ -302,6 +302,58 @@ describe('ticket chat input', () => {
     expect(handled).toBe(false);
   });
 
+  it.each([
+    ['BNB Chain wallet address', 'bsc', '0xB533aF4881f450C90e3339E84FC4a91fA381a790', false],
+    ['Ethereum wallet address', 'eth', `0x${'a'.repeat(40)}`, false],
+    ['BNB Chain transaction hash', 'bsc', `0x${'a'.repeat(64)}`, true],
+    ['BNB Chain transaction hash without prefix', 'bsc', 'a'.repeat(64), true],
+    ['truncated EVM hash', 'bsc', `0x${'a'.repeat(63)}`, false],
+    ['wrong-network Solana signature on BNB', 'bsc', '4ReKprwf3WdLHRrzp4ctPWNBsQDPL3VZz3zMmoZfcGJMJCHh5Vq937mPdyxhCbw54wNnA6hZ7KfNpQdpt13yY7A9', false],
+    ['Litecoin transaction ID', 'ltc', 'b'.repeat(64), true],
+    ['Bitcoin receiving address', 'btc', 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', false],
+    ['Solana wallet address', 'sol', '3arZgfuKrZ1e8Rh1GCd7jB63tbeTk8YnfdM3XZ57f81V', false],
+    ['Solana transaction signature', 'sol', '4ReKprwf3WdLHRrzp4ctPWNBsQDPL3VZz3zMmoZfcGJMJCHh5Vq937mPdyxhCbw54wNnA6hZ7KfNpQdpt13yY7A9', true],
+    ['Aptos account/tx hash ambiguity', 'aptos', `0x${'a'.repeat(64)}`, false],
+    ['unresolved sending network', null, 'a'.repeat(64), false],
+    ['non-transaction chat', 'bsc', 'I just sent my deposit', false],
+  ])('%s is %s: only valid sending-chain tx hashes trigger the provider', async (_description, blockchain, input, accepted) => {
+    const assetId = 'input-asset';
+    const ticket = { id: 'ticket', channel_id: 'channel', user_id: 'owner', state: 'OPEN', step: 'ACTIVE', state_data: {} };
+    const swap = {
+      id: 'swap', ticket_id: 'ticket', status: 'PENDING_DEPOSIT', origin_asset_id: assetId,
+      executable_quote: { quote: {} }, deposit_address: 'deposit', deposit_tx_hash: null,
+    };
+    const repositories = {
+      getOpenTicketByChannel: vi.fn().mockResolvedValue(ticket),
+      getSwapByTicket: vi.fn().mockResolvedValue(swap),
+      touchTicket: vi.fn().mockResolvedValue(undefined),
+      saveDepositTransactionHash: vi.fn().mockResolvedValue({ ...swap, deposit_tx_hash: input }),
+    };
+    const oneClick = { submitDepositTransaction: vi.fn().mockResolvedValue(undefined) };
+    const service = makeService({
+      repositories,
+      oneClick,
+      assets: blockchain ? [{ assetId, blockchain }] : [],
+    });
+    service.renderProgress = vi.fn().mockResolvedValue(undefined);
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const handled = await service.handleMessage(message(input, reply));
+    if (accepted) {
+      expect(handled).toBe(true);
+      expect(oneClick.submitDepositTransaction).toHaveBeenCalledOnce();
+      expect(oneClick.submitDepositTransaction).toHaveBeenCalledWith(swap, input);
+      expect(repositories.saveDepositTransactionHash).toHaveBeenCalledWith('ticket', input);
+      expect(reply).toHaveBeenCalledOnce();
+      expect(reply.mock.calls[0][0].content).toContain('Transaction ID submitted');
+    } else {
+      expect(handled).toBe(false);
+      expect(oneClick.submitDepositTransaction).not.toHaveBeenCalled();
+      expect(repositories.saveDepositTransactionHash).not.toHaveBeenCalled();
+      expect(repositories.touchTicket).not.toHaveBeenCalled();
+      expect(reply).not.toHaveBeenCalled();
+    }
+  });
+
   it('stops treating chat messages as transaction submissions after one is saved', async () => {
     const transactionId = 'a'.repeat(64);
     const ticket = {
@@ -337,7 +389,7 @@ describe('ticket chat input', () => {
       getOpenTicketByChannel: vi.fn().mockResolvedValue(ticket),
       touchTicket: vi.fn().mockResolvedValue(ticket),
       getSwapByTicket: vi.fn().mockResolvedValue({
-        status: 'PENDING_DEPOSIT', executable_quote: { quote: {} }, deposit_tx_hash: null,
+        status: 'PENDING_DEPOSIT', executable_quote: { quote: {} }, origin_asset_id: 'ltc', deposit_tx_hash: null,
       }),
       saveDepositTransactionHash: vi.fn(),
     };
@@ -346,7 +398,7 @@ describe('ticket chat input', () => {
       classifyError: vi.fn().mockReturnValue({ code: 'DEPOSIT_TX_REJECTED', userMessage: 'Invalid transaction ID.' }),
       safeErrorLogFields: vi.fn().mockReturnValue({ errorCode: 'DEPOSIT_TX_REJECTED' }),
     };
-    const service = makeService({ repositories, oneClick });
+    const service = makeService({ repositories, oneClick, assets: [{ assetId: 'ltc', blockchain: 'ltc' }] });
     const reply = vi.fn().mockResolvedValue(undefined);
 
     const handled = await service.handleMessage(message(transactionId, reply));
