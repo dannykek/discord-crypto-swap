@@ -38,6 +38,7 @@ import {
 } from '../discord/views.js';
 import { networkLabel, OTHER_COIN_KEY } from './coin-policy.js';
 import { getPopularSwap } from './popular-swaps.js';
+import { PriceCheckFlow } from './price-check-flow.js';
 import { buildTranscriptFiles, fetchAllChannelMessages } from './transcript-service.js';
 import { createCompletionRoutePng } from './completion-graphic.js';
 import { completionVouchText } from './completion-presentation.js';
@@ -84,6 +85,7 @@ export class TicketService {
     this.routeChecks = new Set();
     this.routeCheckCooldowns = new Map();
     this.centralTranscriptChannel = null;
+    this.priceCheck = new PriceCheckFlow(this);
   }
 
   setStatusWorker(statusWorker) {
@@ -520,6 +522,9 @@ export class TicketService {
       });
       return true;
     }
+    if (interaction.customId === 'panel:check-price' || interaction.customId?.startsWith('price:')) {
+      return this.priceCheck.handle(interaction);
+    }
     if (interaction.isButton() && interaction.customId === 'panel:start') {
       await this.startTicket(interaction);
       return true;
@@ -617,7 +622,7 @@ export class TicketService {
     });
   }
 
-  async startTicket(interaction) {
+  async startTicket(interaction, initialSelection = null) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const guildConfig = this.guildConfigs.get(interaction.guildId);
     if (!guildConfig) {
@@ -627,6 +632,17 @@ export class TicketService {
     if (!this.health.isReady()) {
       await interaction.editReply('The swap service is temporarily unavailable. Please try again later.');
       return;
+    }
+    if (initialSelection) {
+      const origin = this.coinPolicy.getAssetsForCoin(initialSelection.originCoin)
+        .find(asset => asset.assetId === initialSelection.originAssetId);
+      const destination = this.coinPolicy.getAssetsForCoin(initialSelection.destinationCoin, initialSelection.originAssetId)
+        .find(asset => asset.assetId === initialSelection.destinationAssetId);
+      const amountBase = String(initialSelection.amountBase ?? '');
+      if (!origin || !destination || !/^\d+$/.test(amountBase) || BigInt(amountBase) <= 0n) {
+        await interaction.editReply('Your selected pair is no longer available. Start a new price check.');
+        return;
+      }
     }
 
     const guild = interaction.guild;
@@ -692,9 +708,16 @@ export class TicketService {
         ],
         reason: `Private swap ticket for Discord user ${interaction.user.id}`,
       });
-      const ticket = await this.repositories.completeTicketCreation(ticketId, channel.id);
+      let ticket = await this.repositories.completeTicketCreation(ticketId, channel.id);
+      if (initialSelection) {
+        ticket = await this.repositories.updateTicketFlowIfStep(ticketId, 'ORIGIN_COIN', 'RECIPIENT_ADDRESS', initialSelection);
+        if (!ticket) throw new Error('Price-check ticket handoff could not be saved.');
+        ticket = await this.withRememberedAddress(ticket);
+      }
       const header = await channel.send({
-        content: `<@${interaction.user.id}> use the controls below to build one swap. Never post a private key or seed phrase.`,
+        content: initialSelection
+          ? `<@${interaction.user.id}> your selected swap is ready. Enter your receiving and refund addresses below. A fresh quote is required before deposit instructions appear. Never share a seed phrase or private key.`
+          : `<@${interaction.user.id}> use the controls below to build one swap. Never post a private key or seed phrase.`,
         ...ticketHeaderPayload(ticket.id),
         allowedMentions: { users: [interaction.user.id] },
       });
@@ -715,6 +738,37 @@ export class TicketService {
 
   async routeTicketInteraction(interaction, ticket, action, argument = null) {
     const data = { ...(ticket.state_data ?? {}) };
+
+    if (['use-saved-recipient', 'use-saved-refund'].includes(action) && interaction.isButton()) {
+      const receiving = action === 'use-saved-recipient';
+      const expected = receiving ? 'RECIPIENT_ADDRESS' : 'REFUND_ADDRESS';
+      if (ticket.step !== expected) throw new UserInputError('That saved-address button belongs to a previous step. Use the latest controls.');
+      const asset = this.catalogue.getAsset(receiving ? data.destinationAssetId : data.originAssetId);
+      if (!asset) throw new UserInputError('The selected network is no longer available.');
+      // Always recheck the completed-swap address history; a stale message
+      // must never supply an unverified/cached wallet address.
+      const address = await this.resolveAddressInput('yes', ticket, asset.blockchain, null,
+        receiving ? 'recipient' : 'refund');
+      const issue = validateKnownAddressFormat(address, asset.blockchain);
+      if (issue) throw new UserInputError('The saved address is not valid for ' + issue.network + '. Paste another address.');
+      if (receiving) {
+        data.recipient = address;
+        const origin = this.catalogue.getAsset(data.originAssetId);
+        if (!origin) throw new UserInputError('The sending network is no longer available.');
+        setRememberedAddress(data, 'rememberedRefundAddress', await this.repositories.getUserChainAddress(
+          ticket.guild_id, ticket.user_id, origin.blockchain, 'refund',
+        ));
+        await this.updateAndRender(interaction, ticket.id, 'REFUND_ADDRESS', data, { expectedStep: ticket.step });
+      } else {
+        data.refundTo = address;
+        const updated = await this.updateAndRender(interaction, ticket.id, 'QUOTE_LOADING', data, { expectedStep: ticket.step });
+        if (updated) {
+          const result = await this.createPreviewFromChat(ticket.id, data, null);
+          if (!result.ok) await this.privateReply(interaction, result.userPayload ?? result.userMessage);
+        }
+      }
+      return;
+    }
 
     if (['watch-exact', 'use-backup', 'retry-exact'].includes(action) && interaction.isButton() && ticket.step === 'USD_AMOUNT') {
       if (data.noRouteOffer !== routeFingerprint(data) || !data.amountBase || !data.recipient || !data.refundTo) throw new UserInputError('Request a new quote before using this option.');

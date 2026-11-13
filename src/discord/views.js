@@ -83,9 +83,16 @@ export function panelPayload(disabled = false, { hasBanner = false } = {}) {
     .setEmoji('🪙')
     .setStyle(ButtonStyle.Secondary);
 
+  const checkPriceButton = new ButtonBuilder()
+    .setCustomId('panel:check-price')
+    .setLabel('Check a price')
+    .setEmoji('💱')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(disabled);
+
   return {
     embeds: [embed],
-    components: [new ActionRowBuilder().addComponents(startButton, supportedCoinsButton)],
+    components: [new ActionRowBuilder().addComponents(startButton, supportedCoinsButton, checkPriceButton)],
   };
 }
 
@@ -240,7 +247,7 @@ export function renderTicket(ticket, catalogue, swap, config, suppliedPolicy = n
         { name: ['USDT', 'USDC'].includes(origin?.symbol) ? 'Token amount' : 'USD amount', value: ['USDT', 'USDC'].includes(origin?.symbol) ? `${safeCode(data.amountDisplay)} ${safeCode(origin.symbol)}` : formatUsd(data.amountUsdRequested), inline: true },
         { name: 'Estimated input', value: `${safeCode(data.amountDisplay)} ${safeCode(origin?.symbol)}`, inline: true },
       );
-    return { embeds: [embed], components: [backRow(ticket.id)] };
+    return { embeds: [embed], components: [addressActions(ticket.id, Boolean(data.rememberedRecipientAddress), 'recipient')] };
   }
 
   if (ticket.step === 'REFUND_ADDRESS') {
@@ -257,7 +264,7 @@ export function renderTicket(ticket, catalogue, swap, config, suppliedPolicy = n
       );
     const lastError = messageForErrorCode(ticket.last_error_code);
     if (lastError) embed.addFields({ name: 'Last quote issue', value: lastError });
-    return { embeds: [embed], components: [backRow(ticket.id)] };
+    return { embeds: [embed], components: [addressActions(ticket.id, Boolean(data.rememberedRefundAddress), 'refund')] };
   }
 
   if (ticket.step === 'QUOTE_LOADING') {
@@ -314,6 +321,16 @@ function networkMenuRow(ticketId, action, coinKey, assets, emojis, selectedAsset
       .setEmoji(emojis.get(coinKey))
       .setDefault(entry.assetId === selectedAssetId)));
   return new ActionRowBuilder().addComponents(select);
+}
+
+function addressActions(ticketId, hasSavedAddress, side) {
+  const buttons = [];
+  if (hasSavedAddress) buttons.push(new ButtonBuilder()
+    .setCustomId(componentId(ticketId, side === 'recipient' ? 'use-saved-recipient' : 'use-saved-refund'))
+    .setLabel('Use saved address')
+    .setStyle(ButtonStyle.Primary));
+  buttons.push(backButton(ticketId));
+  return new ActionRowBuilder().addComponents(buttons);
 }
 
 function backRow(ticketId) {
