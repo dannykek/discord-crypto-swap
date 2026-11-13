@@ -28,7 +28,7 @@ const PROBE = Object.freeze({
 function key(interaction) { return String(interaction.guildId) + ':' + interaction.user.id; }
 function cid(flow, action) { return 'price:' + flow.nonce + ':' + action; }
 function fresh(interaction) {
-  return { nonce: randomUUID().slice(0, 12), startedAt: Date.now(),
+  return { nonce: randomUUID().replaceAll('-', '').slice(0, 12), startedAt: Date.now(),
     userId: interaction.user.id, guildId: interaction.guildId, step: 'ORIGIN_COIN' };
 }
 function safe(value) { return String(value ?? '').replace(/[\r\n]/g, ' ').slice(0, 100); }
