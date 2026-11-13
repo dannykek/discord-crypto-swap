@@ -116,32 +116,28 @@ describe('completed-deal feed', () => {
     expect(legacyMessage.content).toBe('');
   });
 
-  it('DMs the successful swap owner the private ticket transcript and exact copyable vouch', async () => {
-    const ownerId = '123456789012345678';
+  it('DMs completed swap owners only the thank-you, exact vouch text and channel link (no transcript)', async () => {
     const guildId = '1394554081246449807';
     const vouchChannelId = '1522362740415660113';
     const completed = { ...swap(), ticket_id: 'ticket', guild_id: guildId };
     const send = vi.fn().mockResolvedValue(undefined);
-    const ticketChannel = {
-      type: ChannelType.GuildText,
-      messages: { fetch: vi.fn().mockResolvedValue(new Map([[
-        'message-id',
-        { id: 'message-id', author: { id: ownerId, username: 'Owner' }, content: 'My swap is complete', embeds: [], attachments: new Map(), createdTimestamp: 1 },
-      ]])) },
-    };
+    const getTicket = vi.fn();
+    const fetchChannel = vi.fn();
     const repositories = {
       claimCompletionVouchDm: vi.fn().mockResolvedValue(completed),
       completeCompletionVouchDm: vi.fn().mockResolvedValue(undefined),
       failCompletionVouchDm: vi.fn().mockResolvedValue(undefined),
-      getTicket: vi.fn().mockResolvedValue({ id: 'ticket', user_id: ownerId, channel_id: 'channel', state: 'OPEN', created_at: new Date(0) }),
+      getTicket,
     };
     const service = new TicketService({
       client: {
         users: { fetch: vi.fn().mockResolvedValue({ send }) },
-        channels: { fetch: vi.fn().mockResolvedValue(ticketChannel) },
+        channels: { fetch: fetchChannel },
       },
       repositories,
-      catalogue: { getAsset: (id) => id === 'ltc' ? { symbol: 'LTC', blockchain: 'ltc' } : { symbol: 'USDT', blockchain: 'bsc' } },
+      catalogue: { getAsset: (id) => id === 'ltc'
+        ? { symbol: 'LTC', blockchain: 'ltc' }
+        : { symbol: 'USDT', blockchain: 'bsc' } },
       coinPolicy: {},
       emojis: {},
       oneClick: {},
@@ -155,12 +151,17 @@ describe('completed-deal feed', () => {
 
     expect(send).toHaveBeenCalledOnce();
     const dm = send.mock.calls[0][0];
-    expect(dm.embeds[0].toJSON().description).toContain('Vouch <@1412664174042943518> $100 (LTC → USDT BEP 20)');
-    expect(dm.embeds[0].toJSON().description).toContain('ticket transcript is attached');
+    const embed = dm.embeds[0].toJSON();
+    expect(embed.title).toBe('✅ Your swap is complete');
+    expect(embed.description).toContain('Thanks for using **Danny’s Crypto Swap**');
+    expect(embed.description).toContain('Vouch <@1412664174042943518> $100 (LTC → USDT BEP 20)');
+    expect(embed.description).toContain('Only post a vouch if you want to share your experience.');
+    expect(embed.description).not.toMatch(/transcript|attachment/i);
     expect(dm.components[0].toJSON().components[0].url).toBe(`https://discord.com/channels/${guildId}/${vouchChannelId}`);
-    expect(dm.files[0].name).toBe('swap-ticket-ticket.txt');
-    expect(dm.files[0].attachment.toString('utf8')).toContain('My swap is complete');
+    expect(dm).not.toHaveProperty('files');
     expect(dm.allowedMentions).toEqual({ parse: [] });
+    expect(getTicket).not.toHaveBeenCalled();
+    expect(fetchChannel).not.toHaveBeenCalled();
     expect(repositories.completeCompletionVouchDm).toHaveBeenCalledWith('swap');
   });
 
