@@ -81,7 +81,9 @@ function render(flow, service) {
   } else if (flow.step === 'ORIGIN_NETWORK' || flow.step === 'DESTINATION_NETWORK') {
     const receiving = flow.step === 'DESTINATION_NETWORK';
     const coin = receiving ? flow.destinationCoin : flow.originCoin;
-    embed.setDescription('Which **' + safe(coin) + '** network are your funds on?');
+    embed.setDescription(receiving
+      ? 'Which network do you want to receive **' + safe(coin) + '** on?'
+      : 'Which **' + safe(coin) + '** network are your funds on?');
     controls.push(networkMenu(flow, policy, receiving), row(flow, [reset]));
   } else if (flow.step === 'DESTINATION_COIN' || flow.step === 'DESTINATION_OTHER') {
     embed.setDescription('Sending **' + safe(origin?.symbol) + ' on '
