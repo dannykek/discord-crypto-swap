@@ -61,10 +61,12 @@ describe('coin-first ticket component views', () => {
     expect(available.components[0].components.map((button) => button.custom_id)).toEqual([
       'panel:start',
       'panel:supported-coins',
+      'panel:check-price',
     ]);
     expect(available.components[0].components.map((button) => button.label)).toEqual([
       'Start Swap',
       'Supported Coins',
+      'Check a price',
     ]);
 
     const withoutBanner = serialize(panelPayload());
@@ -73,6 +75,7 @@ describe('coin-first ticket component views', () => {
     const disabled = serialize(panelPayload(true, { hasBanner: true }));
     expect(disabled.components[0].components[0]).toMatchObject({ disabled: true, label: 'Temporarily unavailable' });
     expect(disabled.components[0].components[1].disabled).not.toBe(true);
+    expect(disabled.components[0].components[2].disabled).toBe(true);
   });
 
   it('lists only live curated coins and networks in the supported-coins response', () => {
