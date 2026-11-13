@@ -101,6 +101,13 @@ try {
   await ready;
   health.discord = true;
 
+  // Temporary opt-in cleanup: delete only one bot-authored DM with the
+  // exact transcript filename for the selected recipient and ticket.
+  // This block will be removed after the one-time cleanup is verified.
+  await deleteRequestedCompletionDm().catch((error) => {
+    logger.warn({ errorName: error.name, errorCode: error.code ?? null }, 'One-time completion DM cleanup failed');
+  });
+
   await emojis.initialize();
   logger.info({ botUserId: client.user.id, guildCount: ticketService.guildConfigs.size }, 'Discord client ready');
   await ticketService.initializeCommands();
@@ -115,6 +122,26 @@ try {
 } catch (error) {
   logger.fatal({ errorName: error.name, message: error.message }, 'Bot startup failed');
   await shutdown(1);
+}
+
+async function deleteRequestedCompletionDm() {
+  const recipientId = process.env.ONE_TIME_COMPLETION_DM_CLEANUP_USER_ID ?? '';
+  const ticketId = process.env.ONE_TIME_COMPLETION_DM_CLEANUP_TICKET_ID ?? '';
+  if (!/^\d{17,20}$/.test(recipientId) || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ticketId)) return;
+  const user = await client.users.fetch(recipientId);
+  const channel = await user.createDM();
+  const messages = await channel.messages.fetch({ limit: 100 });
+  const filename = `swap-ticket-${ticketId}.txt`;
+  const target = [...messages.values()].find((message) => (
+    message.author?.id === client.user?.id
+    && [...message.attachments.values()].some((attachment) => attachment.name === filename)
+  ));
+  if (!target) {
+    logger.warn({ recipientId, ticketId }, 'Targeted one-time completion DM was not found');
+    return;
+  }
+  await target.delete();
+  logger.info({ recipientId, ticketId, messageId: target.id }, 'Targeted one-time completion DM deleted');
 }
 
 process.once('SIGINT', () => void shutdown(0));
