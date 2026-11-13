@@ -739,6 +739,36 @@ export class TicketService {
   async routeTicketInteraction(interaction, ticket, action, argument = null) {
     const data = { ...(ticket.state_data ?? {}) };
 
+    if (action === 'use-saved-address' && interaction.isButton()
+      && ['RECIPIENT_ADDRESS', 'REFUND_ADDRESS'].includes(ticket.step)) {
+      const receiving = ticket.step === 'RECIPIENT_ADDRESS';
+      const asset = this.catalogue.getAsset(receiving ? data.destinationAssetId : data.originAssetId);
+      if (!asset) throw new UserInputError('The selected network is no longer available.');
+      // Always recheck the completed-swap address history; a stale message
+      // must never supply an unverified/cached wallet address.
+      const address = await this.resolveAddressInput('yes', ticket, asset.blockchain, null,
+        receiving ? 'recipient' : 'refund');
+      const issue = validateKnownAddressFormat(address, asset.blockchain);
+      if (issue) throw new UserInputError('The saved address is not valid for ' + issue.network + '. Paste another address.');
+      if (receiving) {
+        data.recipient = address;
+        const origin = this.catalogue.getAsset(data.originAssetId);
+        if (!origin) throw new UserInputError('The sending network is no longer available.');
+        setRememberedAddress(data, 'rememberedRefundAddress', await this.repositories.getUserChainAddress(
+          ticket.guild_id, ticket.user_id, origin.blockchain, 'refund',
+        ));
+        await this.updateAndRender(interaction, ticket.id, 'REFUND_ADDRESS', data, { expectedStep: ticket.step });
+      } else {
+        data.refundTo = address;
+        const updated = await this.updateAndRender(interaction, ticket.id, 'QUOTE_LOADING', data, { expectedStep: ticket.step });
+        if (updated) {
+          const result = await this.createPreviewFromChat(ticket.id, data, null);
+          if (!result.ok) await this.privateReply(interaction, result.userPayload ?? result.userMessage);
+        }
+      }
+      return;
+    }
+
     if (['watch-exact', 'use-backup', 'retry-exact'].includes(action) && interaction.isButton() && ticket.step === 'USD_AMOUNT') {
       if (data.noRouteOffer !== routeFingerprint(data) || !data.amountBase || !data.recipient || !data.refundTo) throw new UserInputError('Request a new quote before using this option.');
       if (action === 'watch-exact') {
