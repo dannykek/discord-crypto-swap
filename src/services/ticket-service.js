@@ -739,9 +739,10 @@ export class TicketService {
   async routeTicketInteraction(interaction, ticket, action, argument = null) {
     const data = { ...(ticket.state_data ?? {}) };
 
-    if (action === 'use-saved-address' && interaction.isButton()
-      && ['RECIPIENT_ADDRESS', 'REFUND_ADDRESS'].includes(ticket.step)) {
-      const receiving = ticket.step === 'RECIPIENT_ADDRESS';
+    if (['use-saved-recipient', 'use-saved-refund'].includes(action) && interaction.isButton()) {
+      const receiving = action === 'use-saved-recipient';
+      const expected = receiving ? 'RECIPIENT_ADDRESS' : 'REFUND_ADDRESS';
+      if (ticket.step !== expected) throw new UserInputError('That saved-address button belongs to a previous step. Use the latest controls.');
       const asset = this.catalogue.getAsset(receiving ? data.destinationAssetId : data.originAssetId);
       if (!asset) throw new UserInputError('The selected network is no longer available.');
       // Always recheck the completed-swap address history; a stale message
