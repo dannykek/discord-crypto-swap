@@ -83,9 +83,16 @@ export function panelPayload(disabled = false, { hasBanner = false } = {}) {
     .setEmoji('🪙')
     .setStyle(ButtonStyle.Secondary);
 
+  const checkPriceButton = new ButtonBuilder()
+    .setCustomId('panel:check-price')
+    .setLabel('Check a price')
+    .setEmoji('💱')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(disabled);
+
   return {
     embeds: [embed],
-    components: [new ActionRowBuilder().addComponents(startButton, supportedCoinsButton)],
+    components: [new ActionRowBuilder().addComponents(startButton, supportedCoinsButton, checkPriceButton)],
   };
 }
 
