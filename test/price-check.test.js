@@ -156,14 +156,14 @@ describe('private panel price checks', () => {
     const click = { isButton: () => true };
     const ticket = { id: 'ticket', guild_id: 'guild', user_id: 'owner', step: 'RECIPIENT_ADDRESS',
       state_data: { originAssetId: SOURCE_ID, destinationAssetId: DESTINATION_ID } };
-    await service.routeTicketInteraction(click, ticket, 'use-saved-address');
+    await service.routeTicketInteraction(click, ticket, 'use-saved-recipient');
     expect(service.updateAndRender).toHaveBeenCalledWith(click, 'ticket', 'REFUND_ADDRESS',
       expect.objectContaining({ recipient: ltcAddress, rememberedRefundAddress: bscRefund }),
       { expectedStep: 'RECIPIENT_ADDRESS' });
     expect(service.createPreviewFromChat).not.toHaveBeenCalled();
     const refundTicket = { ...ticket, step: 'REFUND_ADDRESS',
       state_data: { ...ticket.state_data, recipient: ltcAddress } };
-    await service.routeTicketInteraction(click, refundTicket, 'use-saved-address');
+    await service.routeTicketInteraction(click, refundTicket, 'use-saved-refund');
     expect(service.updateAndRender).toHaveBeenCalledWith(click, 'ticket', 'QUOTE_LOADING',
       expect.objectContaining({ refundTo: bscRefund }), { expectedStep: 'REFUND_ADDRESS' });
     expect(service.createPreviewFromChat).toHaveBeenCalledOnce();
@@ -220,7 +220,7 @@ describe('private panel price checks', () => {
     expect(rendered.description).toContain('completed swap');
     expect(rendered.description).toContain(completedSavedAddress);
     expect(channel.send.mock.calls[1][0].components[0].toJSON().components[0].custom_id)
-      .toMatch(/use-saved-address$/);
+      .toMatch(/use-saved-recipient$/);
     expect(invoker.editReply.mock.calls[0][0]).toContain('private swap ticket is ready');
     expect(repositories.failTicketCreation).not.toHaveBeenCalled();
   });
