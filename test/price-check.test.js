@@ -139,6 +139,38 @@ describe('private panel price checks', () => {
     expect(service.startTicket).not.toHaveBeenCalled();
   });
 
+  it('rechecks completed-swap wallet history when the saved-address button is clicked', async () => {
+    const ltcAddress = 'LKDxGDJq5fF4FohAB8zJH24mDDNHDNtqsE';
+    const bscRefund = '0x' + 'b'.repeat(40);
+    const repositories = {
+      getUserChainAddress: vi.fn().mockImplementation(async (_guild, _owner, network, side) =>
+        network === 'ltc' && side === 'recipient' ? ltcAddress
+          : network === 'bsc' && side === 'refund' ? bscRefund : null),
+    };
+    const service = new TicketService({
+      client: {}, repositories, catalogue, coinPolicy: policy, emojis: {}, qrService: {}, oneClick: {},
+      config: { guildId: 'guild' }, health: {}, logger: { warn: vi.fn() },
+    });
+    service.updateAndRender = vi.fn().mockResolvedValue({ id: 'ticket' });
+    service.createPreviewFromChat = vi.fn().mockResolvedValue({ ok: true });
+    const click = { isButton: () => true };
+    const ticket = { id: 'ticket', guild_id: 'guild', user_id: 'owner', step: 'RECIPIENT_ADDRESS',
+      state_data: { originAssetId: SOURCE_ID, destinationAssetId: DESTINATION_ID } };
+    await service.routeTicketInteraction(click, ticket, 'use-saved-address');
+    expect(service.updateAndRender).toHaveBeenCalledWith(click, 'ticket', 'REFUND_ADDRESS',
+      expect.objectContaining({ recipient: ltcAddress, rememberedRefundAddress: bscRefund }),
+      { expectedStep: 'RECIPIENT_ADDRESS' });
+    expect(service.createPreviewFromChat).not.toHaveBeenCalled();
+    const refundTicket = { ...ticket, step: 'REFUND_ADDRESS',
+      state_data: { ...ticket.state_data, recipient: ltcAddress } };
+    await service.routeTicketInteraction(click, refundTicket, 'use-saved-address');
+    expect(service.updateAndRender).toHaveBeenCalledWith(click, 'ticket', 'QUOTE_LOADING',
+      expect.objectContaining({ refundTo: bscRefund }), { expectedStep: 'REFUND_ADDRESS' });
+    expect(service.createPreviewFromChat).toHaveBeenCalledOnce();
+    expect(repositories.getUserChainAddress).toHaveBeenCalledWith('guild', 'owner', 'ltc', 'recipient');
+    expect(repositories.getUserChainAddress).toHaveBeenCalledWith('guild', 'owner', 'bsc', 'refund');
+  });
+
   it('starts the actual ticket at receiving address with its prior completed-swap address available', async () => {
     const completedSavedAddress = 'LKDxGDJq5fF4FohAB8zJH24mDDNHDNtqsE';
     const channel = { id: 'new-channel', send: vi.fn().mockResolvedValue({ id: 'msg' }), delete: vi.fn() };
@@ -187,6 +219,8 @@ describe('private panel price checks', () => {
     expect(rendered.description).toContain('Receiving address');
     expect(rendered.description).toContain('completed swap');
     expect(rendered.description).toContain(completedSavedAddress);
+    expect(channel.send.mock.calls[1][0].components[0].toJSON().components[0].custom_id)
+      .toMatch(/use-saved-address$/);
     expect(invoker.editReply.mock.calls[0][0]).toContain('private swap ticket is ready');
     expect(repositories.failTicketCreation).not.toHaveBeenCalled();
   });
