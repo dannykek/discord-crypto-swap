@@ -11,7 +11,7 @@ const assets = [
   { assetId: OTHER_SOURCE, symbol: 'USDT', blockchain: 'eth', price: '1', decimals: 6, priceUpdatedAt: new Date().toISOString() },
   { assetId: DESTINATION_ID, symbol: 'LTC', blockchain: 'ltc', price: '49', decimals: 8, priceUpdatedAt: new Date().toISOString() },
 ];
-const catalogue = { getAsset: (id) => assets.find(a => a.assetId === id) ?? null };
+const catalogue = { getAsset: (id) => assets.find(a => a.assetId === id) ?? null, getAssets: () => assets };
 const policy = new CoinPolicy(catalogue);
 const quote = () => ({
   provider: 'oneclick',
