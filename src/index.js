@@ -127,7 +127,7 @@ try {
 async function deleteRequestedCompletionDm() {
   const recipientId = process.env.ONE_TIME_COMPLETION_DM_CLEANUP_USER_ID ?? '';
   const ticketId = process.env.ONE_TIME_COMPLETION_DM_CLEANUP_TICKET_ID ?? '';
-  if (!/^\\d{17,20}$/.test(recipientId) || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ticketId)) return;
+  if (!/^\d{17,20}$/.test(recipientId) || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ticketId)) return;
   const user = await client.users.fetch(recipientId);
   const channel = await user.createDM();
   const messages = await channel.messages.fetch({ limit: 100 });
