@@ -190,7 +190,8 @@ export class TicketService {
         if (['changenow', 'changelly', 'fixedfloat', 'relay', 'chainflip'].includes(swap.executable_quote.provider)) return false;
         if (swap.status !== 'PENDING_DEPOSIT' || swap.deposit_tx_hash) return false;
 
-        const transactionId = parseTransactionId(message.content);
+        const originBlockchain = this.catalogue.getAsset(swap.origin_asset_id)?.blockchain;
+        const transactionId = parseTransactionId(message.content, originBlockchain);
         if (!transactionId) return false;
         await this.repositories.touchTicket(ticket.id);
 
@@ -2466,17 +2467,54 @@ function setRememberedAddress(data, key, address) {
   else delete data[key];
 }
 
-function parseTransactionId(value) {
-  const result = value.trim();
-  if (
-    result.length < 32
-    || result.length > 180
-    || containsWhitespaceOrControl(result)
-    || !/^[A-Za-z0-9:+/=_-]+$/.test(result)
-  ) {
-    return null;
+const EVM_TX_CHAINS = new Set(['eth', 'bsc', 'arb', 'base', 'op', 'pol', 'avax']);
+const HEX_TX_CHAINS = new Set(['btc', 'ltc', 'bch', 'doge', 'zec', 'xrp', 'tron', 'cardano', 'stellar']);
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function parseTransactionId(value, blockchain) {
+  const hash = value.trim();
+  if (!hash || hash.length > 180 || containsWhitespaceOrControl(hash)) return null;
+
+  // A 20-byte EVM wallet address (0x + 40 hex digits) is never a tx hash.
+  // Validate the sending chain before contacting 1Click or saving anything.
+  if (/^0x[0-9a-f]{40}$/i.test(hash)) return null;
+  if (EVM_TX_CHAINS.has(blockchain)) {
+    return /^(?:0x)?[0-9a-f]{64}$/i.test(hash) ? hash : null;
   }
-  return result;
+  if (HEX_TX_CHAINS.has(blockchain)) {
+    return /^[0-9a-f]{64}$/i.test(hash) ? hash : null;
+  }
+  if (blockchain === 'sol') {
+    // Solana transaction IDs are 64-byte signatures encoded as base58,
+    // not 32-byte public wallet addresses.
+    return hash.length >= 80 && hash.length <= 90 && isBase58Bytes(hash, 64) ? hash : null;
+  }
+  if (blockchain === 'near' || blockchain === 'sui') {
+    return hash.length >= 40 && hash.length <= 45 && isBase58Bytes(hash, 32) ? hash : null;
+  }
+  if (blockchain === 'ton') {
+    // TON's base64/base64url hash representation is 32 bytes.
+    return /^[A-Za-z0-9+/_-]{43}=?$/.test(hash)
+      && Buffer.from(hash.replace(/-/g, '+').replace(/_/g, '/'), 'base64').length === 32
+      ? hash : null;
+  }
+  // Some chains (e.g. Aptos) use the same 0x+64-hex shape for both
+  // account addresses and transaction hashes. Without an on-chain lookup
+  // we cannot distinguish them, so rely on automatic deposit tracking.
+  return null;
+}
+
+function isBase58Bytes(value, expectedBytes) {
+  if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(value)) return false;
+  let n = 0n;
+  for (const ch of value) {
+    const digit = BASE58_ALPHABET.indexOf(ch);
+    if (digit < 0) return false;
+    n = n * 58n + BigInt(digit);
+  }
+  const leadingZeroBytes = value.match(/^1*/)[0].length;
+  const contentBytes = n === 0n ? 0 : Math.ceil(n.toString(16).length / 2);
+  return leadingZeroBytes + contentBytes === expectedBytes;
 }
 
 function loadingPayload(message) {
