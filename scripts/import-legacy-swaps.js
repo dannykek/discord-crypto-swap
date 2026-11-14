@@ -262,6 +262,9 @@ try {
     feesSavedVsOnePercentUsd: usdString(totalUnits / 100n),
     errors: scan.errors,
   });
+  for (const record of pending) {
+    info('source_preview', { messageId: record.messageId, userId: record.userId, orderReference: record.orderReference, amountUsd: record.amountUsd });
+  }
   for (const user of [...byUser.values()].sort((a, b) => (a.units > b.units ? -1 : a.units < b.units ? 1 : 0))) {
     const old = before.get(user.userId);
     const oldCount = BigInt(old?.completed_swap_count ?? 0);
