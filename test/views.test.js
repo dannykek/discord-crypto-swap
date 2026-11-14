@@ -45,37 +45,55 @@ function serialize(payload) {
 }
 
 describe('coin-first ticket component views', () => {
-  it('renders the refreshed swap panel, preserves buttons, and shows the original banner when supplied', () => {
+  it('renders the concise Components V2 swap panel with the banner before the steps', () => {
     const available = serialize(panelPayload(false, { hasBanner: true }));
-    expect(available.embeds[0]).toMatchObject({
-      title: '✦ Crypto Swap | Cross-Chain Exchange',
-      image: { url: 'attachment://swap-banner.jpg' },
-    });
-    expect(available.embeds[0].description).toContain('Open a private ticket');
-    expect(available.embeds[0].fields.map((field) => field.name)).toEqual([
-      '⚡ Simple swapping',
-      '🧭 How it works',
-    ]);
-    expect(available.embeds[0].footer.text).toContain('3 active tickets');
-    expect(JSON.stringify(available.embeds[0])).not.toContain('Trade with care');
-    expect(available.components[0].components.map((button) => button.custom_id)).toEqual([
+    expect(available.flags).toBe(32_768);
+    expect(available.embeds).toEqual([]);
+    expect(available.components).toHaveLength(2);
+
+    const container = available.components[0];
+    expect(container.type).toBe(17);
+    expect(container.accent_color).toBe(0x9892E8);
+
+    const pieces = container.components;
+    const introduction = pieces[0].content;
+    expect(introduction).toContain('✦ Crypto Swap | Cross-Chain Exchange');
+    expect(introduction).toContain('live quotes, competitive fees, and real-time tracking.');
+    expect(introduction).not.toContain('Your gateway');
+
+    const banner = pieces[1];
+    expect(banner.type).toBe(12);
+    expect(banner.items[0].media.url).toBe('attachment://swap-banner.jpg');
+    const steps = pieces[2].content;
+    expect(steps).toContain('⚡ Simple. Secure. Seamless.');
+    expect(steps).toContain('① Choose your pair');
+    expect(steps).toContain('② Review your quote');
+    expect(steps).toContain('③ Complete your swap');
+    expect(steps).not.toContain('4.');
+    expect(pieces[3].content).toContain('Live quotes');
+    expect(pieces[3].content).toContain('No exchange account required');
+    expect(pieces.at(-1).content).toContain('Up to 3 active tickets per member');
+
+    const buttons = available.components[1].components;
+    expect(buttons.map((button) => button.custom_id)).toEqual([
       'panel:start',
-      'panel:supported-coins',
       'panel:check-price',
+      'panel:supported-coins',
     ]);
-    expect(available.components[0].components.map((button) => button.label)).toEqual([
+    expect(buttons.map((button) => button.label)).toEqual([
       'Start Swap',
+      'Check a Price',
       'Supported Coins',
-      'Check a price',
     ]);
 
     const withoutBanner = serialize(panelPayload());
-    expect(withoutBanner.embeds[0].image).toBeUndefined();
+    expect(withoutBanner.components[0].components.some((part) => part.type === 12)).toBe(false);
 
     const disabled = serialize(panelPayload(true, { hasBanner: true }));
-    expect(disabled.components[0].components[0]).toMatchObject({ disabled: true, label: 'Temporarily unavailable' });
-    expect(disabled.components[0].components[1].disabled).not.toBe(true);
-    expect(disabled.components[0].components[2].disabled).toBe(true);
+    const disabledButtons = disabled.components[1].components;
+    expect(disabledButtons[0]).toMatchObject({ disabled: true, label: 'Temporarily unavailable' });
+    expect(disabledButtons[1].disabled).toBe(true);
+    expect(disabledButtons[2].disabled).not.toBe(true);
   });
 
   it('lists only live curated coins and networks in the supported-coins response', () => {
