@@ -371,7 +371,7 @@ export class TicketService {
     };
     if (message) {
       // Replace old panel attachments while keeping the same message and working buttons.
-      await message.edit({ ...payload, attachments: [] });
+      await message.edit({ ...payload, content: null, embeds: [], attachments: [] });
     } else {
       message = await panelChannel.send(payload);
     }
@@ -2634,15 +2634,25 @@ function completionSummaryIsCurrent(message, desiredEmbed, desiredComponents) {
 
 function isSwapPanelMessage(message, botUserId) {
   if (!message || message.author?.id !== botUserId) return false;
-  const ids = (message.components ?? [])
-    .flatMap((row) => row.components ?? [])
-    .map((component) => component.customId ?? component.custom_id)
-    .filter(Boolean);
-  const isLegacyPanel = ids.length === 1 && ids[0] === 'panel:start';
-  const isCurrentPanel = ids.length === 2
-    && ids.includes('panel:start')
-    && ids.includes('panel:supported-coins');
-  return isLegacyPanel || isCurrentPanel;
+  // Standard panel action rows are one level deep. Components V2 nests the
+  // button row inside or alongside display components, so inspect recursively.
+  const ids = [];
+  const collectIds = (items) => {
+    for (const component of items ?? []) {
+      const id = component.customId ?? component.custom_id;
+      if (id) ids.push(id);
+      collectIds(component.components);
+    }
+  };
+  collectIds(message.components);
+  const expected = new Set(['panel:start', 'panel:supported-coins', 'panel:check-price']);
+  if (!ids.every((id) => expected.has(id))) return false;
+  return ids.includes('panel:start')
+    && (ids.length === 1
+      || (ids.length === 2 && ids.includes('panel:supported-coins'))
+      || (ids.length === 3
+        && ids.includes('panel:supported-coins')
+        && ids.includes('panel:check-price')));
 }
 
 function completionAttribution(userId) {
