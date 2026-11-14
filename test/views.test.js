@@ -63,7 +63,7 @@ describe('coin-first ticket component views', () => {
 
     const banner = pieces[1];
     expect(banner.type).toBe(12);
-    expect(banner.items[0].media.url).toBe('attachment://swap-banner.jpg');
+    expect(banner.items[0].media.url).toBe('attachment://swap-banner.gif');
     const steps = pieces[2].content;
     expect(steps).not.toContain('Simple. Secure. Seamless.');
     expect(steps).toContain('① Choose your pair');
