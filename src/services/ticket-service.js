@@ -354,19 +354,19 @@ export class TicketService {
       if (isSwapPanelMessage(fetched, this.client.user.id)) savedMessage = fetched;
     }
 
-    // The original, unmodified user banner is committed separately under src/assets/panel/.
-    // Until it exists, keep the panel functional instead of failing bot startup.
+    // The clean GIF keeps the swap arrows stationary and only animates small stars.
+    // If the asset is unavailable, keep the panel controls usable.
     let banner = null;
     try {
-      banner = await readFile(new URL('../assets/panel/swap-banner.jpg', import.meta.url));
+      banner = await readFile(new URL('../assets/panel/swap-banner.gif', import.meta.url));
     } catch (error) {
-      this.logger.warn({ errorName: error.name }, 'Swap panel banner unavailable; showing the text panel until the original JPG is uploaded');
+      this.logger.warn({ errorName: error.name }, 'Animated swap banner unavailable; showing the panel without artwork');
     }
 
     let message = savedMessage ?? candidates[0] ?? null;
     const payload = {
       ...panelPayload(!this.health.isReady(), { hasBanner: Boolean(banner) }),
-      ...(banner ? { files: [{ attachment: banner, name: 'swap-banner.jpg', description: 'Original Crypto Swap banner' }] } : {}),
+      ...(banner ? { files: [{ attachment: banner, name: 'swap-banner.gif', description: 'Crypto Swap animated banner with gently twinkling stars' }] } : {}),
       allowedMentions: { parse: [] },
     };
     if (message) {
