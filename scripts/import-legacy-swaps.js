@@ -124,6 +124,25 @@ async function collectHistory() {
         records.push(record);
       } catch (error) {
         errors.push({ messageId: message.id, issue: error.message });
+        // Sanitized examples help explain historical format changes; still read-only.
+        if (errors.length <= 8 || errors.length % 20 === 0) {
+          const redact = (value) => String(value ?? '')
+            .replace(/0x[a-fA-F0-9]{40}/g, '[evm-address]')
+            .replace(/bc1[a-zA-Z0-9]{20,}/g, '[btc-address]')
+            .replace(/\\b[1-9A-HJ-NP-Za-km-z]{32,60}\\b/g, '[chain-address]')
+            .slice(0, 1200);
+          info('format_issue', {
+            messageId: message.id, issue: error.message,
+            content: redact(message.content),
+            embeds: (message.embeds ?? []).slice(0, 2).map(embed => ({
+              title: redact(embed.title), description: redact(embed.description),
+              fields: (embed.fields ?? []).map(field => ({
+                name: redact(field.name), value: redact(field.value),
+              })),
+              footer: redact(embed.footer?.text),
+            })),
+          });
+        }
       }
     }
     if (pages % 10 === 0) info('scan_progress', { pages, totalMessages, oldMessages, parsed: records.length });
@@ -280,8 +299,13 @@ try {
     });
   }
 
-  if (scan.errors.length) throw new Error('Rejected: history contains unparseable/duplicate/conflicting records');
-  if (scan.records.length !== scan.oldMessages) throw new Error('Rejected: not every old-bot message was parsed');
+  if (scan.errors.length) {
+    if (mode === '--apply') throw new Error('Rejected: history contains unparseable/duplicate/conflicting records');
+    info('preview_needs_review', { rejectedOldMessages: scan.errors.length, note: 'No changes made; revise older formats before applying.' });
+  }
+  if (scan.records.length !== scan.oldMessages && mode === '--apply') {
+    throw new Error('Rejected: not every old-bot message was parsed');
+  }
   if (mode === '--apply') {
     await applyImport(scan);
   } else {
