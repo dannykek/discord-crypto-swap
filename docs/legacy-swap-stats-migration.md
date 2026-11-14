@@ -33,3 +33,5 @@ This is a migration of posted historical USD-sent figures. The original completi
 ## Final one-order catch-up
 
 The optional `--only-order=E92329` argument scopes the one-time importer to exactly one retired-bot completion message and checks that its posted USD-sent figure is $180.85. This protects every previously imported order from being modified. Run preview and verify user attribution before apply. No Discord messages are modified.
+
+Verified final-order preview: `E92329` belongs to Discord user `1514765672583008283` (brian), source message `1570992363839553638`, posted sent USD `$180.85`; before the final import the account held 51 swaps and `$2586.2924136` volume. Scoped expected addition: one swap and `$180.85`; projected result: 52 swaps, `$2767.1424136` volume. The pre-deploy command for this operation must be cleared after successful import.
