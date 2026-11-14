@@ -4,7 +4,7 @@ import { TicketService } from '../src/services/ticket-service.js';
 
 describe('swap panel reconciliation', () => {
   it('edits the saved panel, deletes only exact duplicate panels, and keeps unrelated messages', async () => {
-    const savedPanel = panelMessage('saved', 20, ['panel:start']);
+    const savedPanel = panelMessage('saved', 20, ['panel:start', 'panel:check-price', 'panel:supported-coins']);
     const olderDuplicate = panelMessage('duplicate', 10, ['panel:start', 'panel:supported-coins']);
     const unrelated = panelMessage('unrelated', 5, ['different:button']);
     const memberPanel = panelMessage('member-panel', 1, ['panel:start'], 'member');
@@ -32,10 +32,46 @@ describe('swap panel reconciliation', () => {
 
     await service.initializePanel();
 
-    expect(savedPanel.edit).toHaveBeenCalledWith(expect.objectContaining({ allowedMentions: { parse: [] } }));
+    expect(savedPanel.edit).toHaveBeenCalledWith(expect.objectContaining({
+      allowedMentions: { parse: [] },
+      flags: MessageFlags.IsComponentsV2,
+      content: null,
+      embeds: [],
+      attachments: [],
+    }));
     expect(olderDuplicate.delete).toHaveBeenCalledOnce();
     expect(unrelated.delete).not.toHaveBeenCalled();
     expect(memberPanel.delete).not.toHaveBeenCalled();
+    expect(panelChannel.send).not.toHaveBeenCalled();
+    expect(repositories.savePanel).toHaveBeenCalledWith('guild', panelChannel.id, savedPanel.id);
+  });
+
+  it('recognizes nested V2 buttons and edits the original panel rather than posting another one', async () => {
+    const savedPanel = panelMessage('v2-saved', 20, [], 'bot');
+    savedPanel.components = [{
+      type: 17,
+      components: [
+        { type: 10, content: 'Intro' },
+        { type: 1, components: [
+          { customId: 'panel:start' },
+          { customId: 'panel:check-price' },
+          { customId: 'panel:supported-coins' },
+        ] },
+      ],
+    }];
+    const recent = new Map([[savedPanel.id, savedPanel]]);
+    const panelChannel = {
+      id: 'panel-channel',
+      type: ChannelType.GuildText,
+      messages: { fetch: vi.fn(async target => target?.limit ? recent : recent.get(target) ?? null) },
+      send: vi.fn(),
+    };
+    const repositories = {
+      getPanel: vi.fn().mockResolvedValue({ channel_id: panelChannel.id, message_id: savedPanel.id }),
+      savePanel: vi.fn(),
+    };
+    await makeService({ panelChannel, category: { type: ChannelType.GuildCategory }, repositories }).initializePanel();
+    expect(savedPanel.edit).toHaveBeenCalledOnce();
     expect(panelChannel.send).not.toHaveBeenCalled();
     expect(repositories.savePanel).toHaveBeenCalledWith('guild', panelChannel.id, savedPanel.id);
   });
