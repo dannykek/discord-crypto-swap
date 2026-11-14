@@ -60,8 +60,8 @@ export function panelPayload(disabled = false, { hasBanner = false } = {}) {
   if (hasBanner) {
     container.addMediaGalleryComponents(
       new MediaGalleryBuilder().addItems((item) => item
-        .setURL('attachment://swap-banner.jpg')
-        .setDescription('Crypto Swap banner showing coins exchanging across networks')),
+        .setURL('attachment://swap-banner.gif')
+        .setDescription('Subtly animated Crypto Swap banner with Bitcoin and Ethereum coins')),
     );
   }
 
