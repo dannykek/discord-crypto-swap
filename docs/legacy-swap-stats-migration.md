@@ -29,3 +29,7 @@ At the current bot's existing 1%-of-volume display convention this is **$634.991
 - **Remove the Railway pre-deploy import command after a successful one-time apply**, to keep future deployments ordinary.
 
 This is a migration of posted historical USD-sent figures. The original completion embeds format fiat amounts to cents, so any sub-cent values not displayed historically cannot be reconstructed.
+
+## Final one-order catch-up
+
+The optional `--only-order=E92329` argument scopes the one-time importer to exactly one retired-bot completion message and checks that its posted USD-sent figure is $180.85. This protects every previously imported order from being modified. Run preview and verify user attribution before apply. No Discord messages are modified.
