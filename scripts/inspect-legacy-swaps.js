@@ -31,7 +31,7 @@ const firstAndLast = [];
 
 log('starting', { channelId: CHANNEL_ID, oldAppId: OLD_APP_ID, mode: 'READ_ONLY' });
 while (true) {
-  const batch = await rest.get(Routes.channelMessages(CHANNEL_ID), { query: { limit: 100, ...(before ? { before } : {}) } });
+  const batch = await rest.get(Routes.channelMessages(CHANNEL_ID), { query: new URLSearchParams({ limit: '100', ...(before ? { before } : {}) }) });
   if (!Array.isArray(batch)) throw new Error('Discord returned an unexpected history response');
   if (!batch.length) break;
   pages++;
@@ -75,7 +75,6 @@ while (true) {
     }
   }
   if (pages % 10 === 0) log('progress', { pages, allMessages, oldBotMessages });
-  if (batch.length < 100) break;
 }
 log('summary', {
   pages, allMessages, oldBotMessages, newBotMessages, otherBotMessages, userMessages,
