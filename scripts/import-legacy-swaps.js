@@ -47,7 +47,7 @@ function parseLegacyMessage(message) {
   const userMatch = /^Exchanged by\s+<@!?(\d{17,20})>\s*$/i.exec(String(message.content ?? '').trim());
   if (!userMatch) throw new Error('Cannot identify the original exchanging user');
   const description = String(embed.description ?? '');
-  if (!/\btotal swap cost\b/i.test(description)) throw new Error('Completed deal missing swap cost marker');
+  if (!/\b(?:total swap cost|network\s*\+\s*spread fee)\b/i.test(description)) throw new Error('Completed deal missing recognized swap cost marker');
   const usdSection = description.split('•')[0];
   const usdMatches = [...usdSection.matchAll(/\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*→\s*\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)/g)];
   if (usdMatches.length !== 1) throw new Error('Expected exactly one USD sent/received pair');
