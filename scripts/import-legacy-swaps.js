@@ -97,7 +97,7 @@ async function collectHistory() {
 
   while (true) {
     const page = await rest.get(Routes.channelMessages(CHANNEL_ID), {
-      query: { limit: 100, ...(before ? { before } : {}) },
+      query: new URLSearchParams({ limit: '100', ...(before ? { before } : {}) }),
     });
     if (!Array.isArray(page)) throw new Error('Unexpected Discord message history response');
     if (!page.length) break;
@@ -127,7 +127,6 @@ async function collectHistory() {
       }
     }
     if (pages % 10 === 0) info('scan_progress', { pages, totalMessages, oldMessages, parsed: records.length });
-    if (page.length < 100) break;
   }
   if (oldMessages === 0) errors.push({ issue: 'No original bot messages were found; refusing empty migration' });
   return { guildId, totalMessages, oldMessages, newMessages, pages, records, errors };
