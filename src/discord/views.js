@@ -67,8 +67,7 @@ export function panelPayload(disabled = false, { hasBanner = false } = {}) {
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      '### ⚡ Simple. Secure. Seamless.\n'
-      + '**① Choose your pair** — Select coins and an amount.\n'
+      '**① Choose your pair** — Select coins and an amount.\n'
       + '**② Review your quote** — Confirm fees and addresses.\n'
       + '**③ Complete your swap** — Deposit and track your exchange.',
     ),
