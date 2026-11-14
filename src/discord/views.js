@@ -6,6 +6,7 @@ import {
   ContainerBuilder,
   EmbedBuilder,
   MessageFlags,
+  MediaGalleryBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   TextDisplayBuilder,
@@ -47,28 +48,38 @@ function safeCode(value) {
 }
 
 export function panelPayload(disabled = false, { hasBanner = false } = {}) {
-  const embed = new EmbedBuilder()
-    .setColor(0x9892E8)
-    .setTitle('✦ Crypto Swap | Cross-Chain Exchange')
-    .setDescription(
-      '**Your gateway to crypto swaps across supported networks.**\n'
-      + 'Open a private ticket, compare a live quote, and track your exchange from deposit to delivery.',
-    )
-    .addFields(
-      {
-        name: '⚡ Simple swapping',
-        value: 'Choose your coins and networks. Review the expected output and quoted costs before committing.',
-      },
-      {
-        name: '🧭 How it works',
-        value: '**1.** Select a pair and enter an amount.\n'
-          + '**2.** Add your receiving and refund addresses.\n'
-          + '**3.** Review the quote, then deposit from your own wallet.\n'
-          + '**4.** Follow live updates in your private ticket.',
-      },
-    )
-    .setFooter({ text: 'Up to 3 active tickets per member • Always verify the network and deposit address' });
-  if (hasBanner) embed.setImage('attachment://swap-banner.jpg');
+  // Components V2 allow the artwork to sit between the introduction and the
+  // three steps, instead of forcing the image beneath every embed field.
+  const container = new ContainerBuilder()
+    .setAccentColor(0x9892E8)
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(
+      '# ✦ Crypto Swap | Cross-Chain Exchange\n'
+      + 'Swap crypto across supported networks with live quotes, competitive fees, and real-time tracking.',
+    ));
+
+  if (hasBanner) {
+    container.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems((item) => item
+        .setURL('attachment://swap-banner.jpg')
+        .setDescription('Crypto Swap banner showing coins exchanging across networks')),
+    );
+  }
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      '### ⚡ Simple. Secure. Seamless.\n'
+      + '**① Choose your pair** — Select coins and an amount.\n'
+      + '**② Review your quote** — Confirm fees and addresses.\n'
+      + '**③ Complete your swap** — Deposit and track your exchange.',
+    ),
+    new TextDisplayBuilder().setContent(
+      '⚡ **Live quotes**  •  🔒 **No exchange account required**  •  🌐 **Multi-network**',
+    ),
+  );
+  container.addSeparatorComponents((separator) => separator.setDivider(true));
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent(
+    '-# Up to 3 active tickets per member • Always verify the network and deposit address.',
+  ));
 
   const startButton = new ButtonBuilder()
     .setCustomId('panel:start')
@@ -77,22 +88,25 @@ export function panelPayload(disabled = false, { hasBanner = false } = {}) {
     .setStyle(ButtonStyle.Primary)
     .setDisabled(disabled);
 
+  const checkPriceButton = new ButtonBuilder()
+    .setCustomId('panel:check-price')
+    .setLabel('Check a Price')
+    .setEmoji('🏷️')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(disabled);
+
   const supportedCoinsButton = new ButtonBuilder()
     .setCustomId('panel:supported-coins')
     .setLabel('Supported Coins')
     .setEmoji('🪙')
     .setStyle(ButtonStyle.Secondary);
 
-  const checkPriceButton = new ButtonBuilder()
-    .setCustomId('panel:check-price')
-    .setLabel('Check a price')
-    .setEmoji('💱')
-    .setStyle(ButtonStyle.Secondary)
-    .setDisabled(disabled);
-
   return {
-    embeds: [embed],
-    components: [new ActionRowBuilder().addComponents(startButton, supportedCoinsButton, checkPriceButton)],
+    flags: MessageFlags.IsComponentsV2,
+    components: [
+      container,
+      new ActionRowBuilder().addComponents(startButton, checkPriceButton, supportedCoinsButton),
+    ],
   };
 }
 
