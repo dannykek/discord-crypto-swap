@@ -63,6 +63,7 @@ describe('swap panel reconciliation', () => {
     const panelChannel = {
       id: 'panel-channel',
       type: ChannelType.GuildText,
+      isTextBased: () => true,
       messages: { fetch: vi.fn(async target => target?.limit ? recent : recent.get(target) ?? null) },
       send: vi.fn(),
     };
