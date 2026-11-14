@@ -1,6 +1,7 @@
 // One-time, read-only inspection of a Discord completed-swaps channel.
 // Does not send, edit, react to, or delete Discord messages; does not access the database.
 import 'dotenv/config';
+import { URLSearchParams } from 'node:url';
 import { REST, Routes } from 'discord.js';
 
 const CHANNEL_ID = '1537472869947285675';
@@ -15,7 +16,10 @@ const clip = (v, max = 900) => String(v ?? '')
   .replace(/bc1[a-zA-HJ-NP-Z0-9]{20,}/g, '[btc-address]')
   .replace(/\b[1-9A-HJ-NP-Za-km-z]{32,60}\b/g, '[chain-address]')
   .replace(/\s+/g, ' ').trim().slice(0, max);
-const log = (event, data) => console.log('LEGACY_SCAN ' + JSON.stringify({ event, ...data }));
+const log = (event, data) => {
+  // eslint-disable-next-line no-console
+  console.log('LEGACY_SCAN ' + JSON.stringify({ event, ...data }));
+};
 
 let before;
 let pages = 0;
