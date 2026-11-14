@@ -129,7 +129,7 @@ async function collectHistory() {
           const redact = (value) => String(value ?? '')
             .replace(/0x[a-fA-F0-9]{40}/g, '[evm-address]')
             .replace(/bc1[a-zA-Z0-9]{20,}/g, '[btc-address]')
-            .replace(/\\b[1-9A-HJ-NP-Za-km-z]{32,60}\\b/g, '[chain-address]')
+            .replace(/\b[1-9A-HJ-NP-Za-km-z]{32,60}\b/g, '[chain-address]')
             .slice(0, 1200);
           info('format_issue', {
             messageId: message.id, issue: error.message,
