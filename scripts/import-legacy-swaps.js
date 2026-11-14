@@ -13,6 +13,12 @@ const OLD_BOT_ID = '1511078534649614336';
 const NEW_BOT_ID = '1565170286137974976';
 const USD_SCALE = 10n ** 18n;
 const mode = process.argv[2] ?? '--preview';
+const targetOrderOption = process.argv[3] ?? null;
+if (process.argv.length > 4 || (targetOrderOption && targetOrderOption !== '--only-order=E92329')) {
+  throw new Error('Only --only-order=E92329 is supported for a targeted final import');
+}
+const TARGET_ORDER = targetOrderOption ? 'E92329' : null;
+const TARGET_AMOUNT_USD = '180.85';
 if (!['--preview', '--apply'].includes(mode)) {
   throw new Error('Specify --preview (read-only) or --apply (transactional import).');
 }
@@ -253,7 +259,23 @@ async function applyImport(scan) {
 
 try {
   info('start', { channelId: CHANNEL_ID, oldBotId: OLD_BOT_ID, newBotId: NEW_BOT_ID, mode, discordMode: 'GET_ONLY' });
-  const scan = await collectHistory();
+  const fullScan = await collectHistory();
+  let scan = fullScan;
+  if (TARGET_ORDER) {
+    const matches = fullScan.records.filter(record => record.orderReference === TARGET_ORDER);
+    if (matches.length !== 1) throw new Error('Exactly one original-bot message must match order E92329; found ' + matches.length);
+    if (matches[0].amountUsd !== TARGET_AMOUNT_USD) {
+      throw new Error('Order E92329 USD sent value does not match the $180.85 shown in the source screenshot');
+    }
+    scan = { ...fullScan, oldMessages: 1, records: matches };
+    const member = await rest.get(Routes.guildMember(scan.guildId, matches[0].userId)).catch(() => null);
+    info('target_verified', {
+      orderReference: TARGET_ORDER, messageId: matches[0].messageId,
+      userId: matches[0].userId, amountUsd: matches[0].amountUsd,
+      displayName: member?.nick ?? member?.user?.global_name ?? member?.user?.username ?? null,
+      totalOldBotMessagesScanned: fullScan.oldMessages, totalMessagesScanned: fullScan.totalMessages,
+    });
+  }
   const client = await pool.connect();
   let pending;
   let ledger;
@@ -279,6 +301,7 @@ try {
     pendingVolumeUsd: usdString(totalUnits),
     feesSavedVsOnePercentUsd: usdString(totalUnits / 100n),
     errors: scan.errors,
+    ...(TARGET_ORDER ? { targetOrder: TARGET_ORDER, oldBotMessagesScanned: fullScan.oldMessages } : {}),
   });
   for (const record of pending) {
     info('source_preview', { messageId: record.messageId, userId: record.userId, orderReference: record.orderReference, amountUsd: record.amountUsd });
