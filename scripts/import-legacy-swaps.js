@@ -28,7 +28,6 @@ function toUsdUnits(value) {
   }
   const [whole, fraction = ''] = input.split('.');
   const units = BigInt(whole) * USD_SCALE + BigInt(fraction.padEnd(18, '0'));
-  if (units <= 0n) throw new Error('USD value must be positive');
   return units;
 }
 function usdString(units) {
@@ -53,6 +52,7 @@ function parseLegacyMessage(message) {
   const usdMatches = [...usdSection.matchAll(/\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*→\s*\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)/g)];
   if (usdMatches.length !== 1) throw new Error('Expected exactly one USD sent/received pair');
   const amountUsd = toUsdUnits(usdMatches[0][1]);
+  if (amountUsd <= 0n) throw new Error('Completed deal has no positive USD sent amount');
   // Existing live bot stats use the deposited/sent USD value, NOT the received USD or cost.
   const orderMatch = /^Order\s+([A-Fa-f0-9]{6})$/.exec(String(embed.footer?.text ?? '').trim());
   if (!orderMatch) throw new Error('Missing or invalid completed order reference');
