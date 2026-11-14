@@ -3,6 +3,7 @@
 //        node scripts/import-legacy-swaps.js --apply  (only after preview validation)
 // Discord access in BOTH modes is GET-only. This script NEVER posts, edits or deletes Discord messages.
 import 'dotenv/config';
+import { URLSearchParams } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { REST, Routes } from 'discord.js';
 import { loadConfig } from '../src/config.js';
@@ -25,7 +26,10 @@ if (!['--preview', '--apply'].includes(mode)) {
 const config = loadConfig();
 const rest = new REST({ version: '10' }).setToken(config.discordToken);
 const pool = createPool(config);
-const info = (event, data) => console.log('LEGACY_IMPORT ' + JSON.stringify({ event, ...data }));
+const info = (event, data) => {
+  // eslint-disable-next-line no-console
+  console.log('LEGACY_IMPORT ' + JSON.stringify({ event, ...data }));
+};
 
 function toUsdUnits(value) {
   const input = String(value ?? '').trim().replaceAll(',', '');
