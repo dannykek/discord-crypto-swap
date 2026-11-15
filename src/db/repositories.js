@@ -912,6 +912,61 @@ export class Repositories {
     return Boolean(result.rows[0]?.completion_summary_abandoned_at);
   }
 
+  // A vouch request is created only for swaps inserted after migration 021.
+  // The request remains in PostgreSQL even after ticket/swap cleanup.
+  async registerVouchRequest(swap, vouchText) {
+    if (swap.track_vouch === false) return null;
+    const result = await this.pool.query(
+      `INSERT INTO swap_vouch_requests
+         (swap_id, guild_id, user_id, vouch_text, completed_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (swap_id) DO NOTHING
+       RETURNING swap_id`,
+      [swap.id, swap.guild_id, swap.user_id, vouchText, swap.terminal_at ?? new Date()],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listPendingVouchRequests(guildId, userId, limit = 50) {
+    const result = await this.pool.query(
+      `SELECT swap_id, guild_id, user_id, vouch_text, completed_at
+       FROM swap_vouch_requests
+       WHERE guild_id = $1 AND user_id = $2 AND status = 'PENDING'
+       ORDER BY completed_at DESC, swap_id DESC
+       LIMIT $3`,
+      [guildId, userId, limit],
+    );
+    return result.rows;
+  }
+
+  async recordVouchSubmission(guildId, userId, messageId, content, sentAt) {
+    const pending = await this.listPendingVouchRequests(guildId, userId);
+    const eligible = pending.filter((request) =>
+      new Date(request.completed_at).getTime() <= new Date(sentAt).getTime());
+    if (!eligible.length) return null;
+
+    // When the user pastes a copyable message, match that specific swap.
+    // If they write a custom vouch with the required mention, treat it as
+    // feedback for the oldest unvouched swap, never multiple at once.
+    const normalize = (value) => String(value).replace(/\\s+/g, ' ').trim().toLowerCase();
+    const submitted = normalize(content);
+    const exact = eligible.find((request) => submitted.includes(normalize(request.vouch_text)));
+    const chosen = exact ?? eligible.at(-1);
+
+    const result = await this.pool.query(
+      `UPDATE swap_vouch_requests
+       SET status = 'VOUCHED', vouch_message_id = $2, vouched_at = $3
+       WHERE swap_id = $1 AND guild_id = $4 AND user_id = $5
+         AND status = 'PENDING'
+         AND NOT EXISTS (
+           SELECT 1 FROM swap_vouch_requests WHERE vouch_message_id = $2
+         )
+       RETURNING swap_id, user_id, vouch_text`,
+      [chosen.swap_id, messageId, sentAt, guildId, userId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async claimCompletionVouchDm(swapId, leaseBefore) {
     const result = await this.pool.query(
       `WITH claimed AS (
