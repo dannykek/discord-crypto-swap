@@ -948,7 +948,7 @@ export class Repositories {
     // When the user pastes a copyable message, match that specific swap.
     // If they write a custom vouch with the required mention, treat it as
     // feedback for the oldest unvouched swap, never multiple at once.
-    const normalize = (value) => String(value).replace(/\\s+/g, ' ').trim().toLowerCase();
+    const normalize = (value) => String(value).replace(/\s+/g, ' ').trim().toLowerCase();
     const submitted = normalize(content);
     const exact = eligible.find((request) => submitted.includes(normalize(request.vouch_text)));
     const chosen = exact ?? eligible.at(-1);
