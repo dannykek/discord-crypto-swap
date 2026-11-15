@@ -41,11 +41,16 @@ import { getPopularSwap } from './popular-swaps.js';
 import { PriceCheckFlow } from './price-check-flow.js';
 import { buildTranscriptFiles, fetchAllChannelMessages } from './transcript-service.js';
 import { createCompletionRoutePng } from './completion-graphic.js';
-import { completionVouchText } from './completion-presentation.js';
+import { completionVouchText, VOUCH_TARGET_ID } from './completion-presentation.js';
 import { isReusableChainAddress, validateKnownAddressFormat } from '../utils/address-validation.js';
 
 const MAX_PRICE_AGE_MS = 30 * 60 * 1000;
 const MAX_ACTIVE_TICKETS_PER_USER = 3;
+const VOUCH_GUILD_ID = '1394554081246449807';
+const VOUCH_CHANNEL_ID = '1394567035324731463';
+const VOUCH_REMINDER_LIFETIME_MS = 10 * 60_000;
+const VOUCH_REMINDER_DM_COOLDOWN_MS = 10 * 60_000;
+const VOUCH_MESSAGE_PATTERN = new RegExp('\\\\bvouch\\\\s+<@!?' + VOUCH_TARGET_ID + '>', 'i');
 const STALE_APPLICATION_COMMAND_NAMES = Object.freeze(['mutuals', 'setup']);
 const ROUTE_CHECK_COOLDOWN_MS = 30_000;
 const MAX_ALTERNATIVE_ROUTE_CANDIDATES = 6;
