@@ -50,7 +50,7 @@ const VOUCH_GUILD_ID = '1394554081246449807';
 const VOUCH_CHANNEL_ID = '1394567035324731463';
 const VOUCH_REMINDER_LIFETIME_MS = 10 * 60_000;
 const VOUCH_REMINDER_DM_COOLDOWN_MS = 10 * 60_000;
-const VOUCH_MESSAGE_PATTERN = new RegExp('\\\\bvouch\\\\s+<@!?' + VOUCH_TARGET_ID + '>', 'i');
+const VOUCH_MESSAGE_PATTERN = /\bvouch\s+<@!?1412664174042943518>/i;
 const STALE_APPLICATION_COMMAND_NAMES = Object.freeze(['mutuals', 'setup']);
 const ROUTE_CHECK_COOLDOWN_MS = 30_000;
 const MAX_ALTERNATIVE_ROUTE_CANDIDATES = 6;
@@ -91,6 +91,8 @@ export class TicketService {
     this.routeCheckCooldowns = new Map();
     this.centralTranscriptChannel = null;
     this.priceCheck = new PriceCheckFlow(this);
+    this.vouchReminderPrompts = new Map();
+    this.vouchReminderDmTimes = new Map();
   }
 
   setStatusWorker(statusWorker) {
@@ -100,6 +102,9 @@ export class TicketService {
   async handleMessage(message) {
     if (!message.guildId || message.author?.bot || message.webhookId || typeof message.content !== 'string') return false;
     if (this.guildConfigs.size > 0 && !this.guildConfigs.has(message.guildId)) return false;
+    if (message.guildId === VOUCH_GUILD_ID && message.channelId === VOUCH_CHANNEL_ID) {
+      return this.handleVouchSubmission(message);
+    }
     const previous = this.messageQueues.get(message.channelId) ?? Promise.resolve(false);
     const current = previous.catch(() => false).then(() => this.handleMessageInOrder(message));
     this.messageQueues.set(message.channelId, current);
@@ -108,6 +113,150 @@ export class TicketService {
     } finally {
       if (this.messageQueues.get(message.channelId) === current) this.messageQueues.delete(message.channelId);
     }
+  }
+
+  vouchChannelForGuild(guildId) {
+    const guild = this.guildConfigs.get(guildId);
+    if (!guild) return null;
+    return guildId === VOUCH_GUILD_ID ? VOUCH_CHANNEL_ID : guild.vouchChannelId ?? null;
+  }
+
+  async sendCopyableVouchText(user, vouchText) {
+    await user.send({ content: vouchText, allowedMentions: { parse: [] } });
+  }
+
+  async handleVouchSubmission(message) {
+    if (!VOUCH_MESSAGE_PATTERN.test(message.content)) return false;
+    if (typeof this.repositories.recordVouchSubmission !== 'function') return false;
+    const record = await this.repositories.recordVouchSubmission(
+      message.guildId, message.author.id, message.id, message.content,
+      message.createdAt ?? new Date(message.createdTimestamp ?? Date.now()),
+    );
+    if (!record) return false;
+    try {
+      const user = await this.client.users.fetch(message.author.id);
+      await user.send({
+        embeds: [new EmbedBuilder()
+          .setColor(0x9D81F6)
+          .setTitle('✅ Vouch received!')
+          .setDescription('Thanks for sharing your experience with **Danny’s Crypto Swap**! Your vouch has been recorded. You can start your next exchange whenever you’re ready.')],
+        allowedMentions: { parse: [] },
+      });
+    } catch (error) {
+      this.logger.warn({ userId: message.author.id, errorName: error.name },
+        'Vouch recorded but the confirmation DM could not be delivered');
+    }
+    return true;
+  }
+
+  async reconcileRecentVouches(guildId, userId, pending) {
+    if (guildId !== VOUCH_GUILD_ID || !pending?.length || !this.client.channels?.fetch) return;
+    const channel = await this.client.channels.fetch(VOUCH_CHANNEL_ID).catch(() => null);
+    if (!channel?.messages?.fetch) return;
+    const earliest = Math.min(...pending.map((request) => new Date(request.completed_at).getTime()));
+    let before = null;
+    const posted = [];
+    for (let page = 0; page < 20; page++) {
+      const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+      if (!batch?.size) break;
+      const messages = [...batch.values()];
+      for (const message of messages) {
+        if (message.author?.id === userId && !message.author?.bot && !message.webhookId
+          && VOUCH_MESSAGE_PATTERN.test(message.content ?? '')
+          && message.createdTimestamp >= earliest) {
+          posted.push(message);
+        }
+      }
+      // Discord's message snowflakes are chronological; stop at the oldest
+      // pending completion rather than re-reading the entire channel.
+      const oldest = messages.at(-1);
+      if (!oldest || oldest.createdTimestamp < earliest || messages.length < 100) break;
+      before = oldest.id;
+    }
+    for (const message of posted.sort((a, b) => a.createdTimestamp - b.createdTimestamp)) {
+      await this.handleVouchSubmission(message);
+    }
+  }
+
+  async offerVouchReminder(interaction, guildConfig, pending, initialSelection) {
+    const nonce = randomUUID().replaceAll('-', '').slice(0, 12);
+    const now = Date.now();
+    for (const [id, entry] of this.vouchReminderPrompts) {
+      if (entry.expiresAt <= now) this.vouchReminderPrompts.delete(id);
+    }
+    this.vouchReminderPrompts.set(nonce, {
+      guildId: interaction.guildId,
+      userId: interaction.user.id,
+      initialSelection,
+      vouchText: pending.vouch_text,
+      expiresAt: now + VOUCH_REMINDER_LIFETIME_MS,
+    });
+
+    const key = interaction.guildId + ':' + interaction.user.id;
+    let sent = false;
+    if (now - (this.vouchReminderDmTimes.get(key) ?? 0) >= VOUCH_REMINDER_DM_COOLDOWN_MS) {
+      try {
+        await this.sendCopyableVouchText(interaction.user, pending.vouch_text);
+        this.vouchReminderDmTimes.set(key, now);
+        sent = true;
+      } catch (error) {
+        this.logger.warn({ userId: interaction.user.id, errorName: error.name },
+          'Could not DM copyable outstanding vouch text');
+      }
+    }
+    const channelId = this.vouchChannelForGuild(interaction.guildId) ?? guildConfig.vouchChannelId;
+    const buttons = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('vouch:continue:' + nonce)
+        .setLabel('Continue to Swap').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('vouch:resend:' + nonce)
+        .setLabel('Resend Vouch Text').setStyle(ButtonStyle.Secondary),
+    );
+    if (channelId) {
+      buttons.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link)
+        .setLabel('Open Vouch Channel')
+        .setURL('https://discord.com/channels/' + interaction.guildId + '/' + channelId));
+    }
+    const embed = new EmbedBuilder()
+      .setColor(0x9D81F6)
+      .setTitle('📝 You haven’t vouched for your last swap')
+      .setDescription(
+        'Thanks for exchanging with us again! Your last completed swap still has an optional vouch pending.\n\n'
+        + (sent ? 'I sent your copyable vouch text in a separate DM.\n\n' : 'Your vouch text is available in your DMs. Use **Resend Vouch Text** if needed.\n\n')
+        + '**How to vouch**\n'
+        + '① Copy the separate vouch message and post it in our vouch channel.\n'
+        + '② **On mobile?** Long-press the message and tap **Copy Text**.\n\n'
+        + 'Vouching is voluntary — you can **Continue to Swap** without posting one.',
+      );
+    await interaction.editReply({
+      embeds: [embed],
+      components: [buttons],
+      allowedMentions: { parse: [] },
+    });
+  }
+
+  async handleVouchReminderButton(interaction) {
+    const match = /^vouch:(continue|resend):([a-f0-9]{12})$/.exec(interaction.customId ?? '');
+    if (!match) return false;
+    const [, action, nonce] = match;
+    const item = this.vouchReminderPrompts.get(nonce);
+    if (!item || item.expiresAt < Date.now()
+      || item.userId !== interaction.user.id || item.guildId !== interaction.guildId) {
+      await this.privateReply(interaction, 'This reminder expired. Please use Start Swap or Check a Price again.');
+      return true;
+    }
+    if (action === 'resend') {
+      try {
+        await this.sendCopyableVouchText(interaction.user, item.vouchText);
+        this.vouchReminderDmTimes.set(item.guildId + ':' + item.userId, Date.now());
+        await this.privateReply(interaction, 'Sent the standalone vouch text to your DMs. On mobile, long-press it and tap Copy Text.');
+      } catch {
+        await this.privateReply(interaction, 'I couldn’t DM you. Please enable direct messages from this server and try again. You can still continue swapping.');
+      }
+      return true;
+    }
+    this.vouchReminderPrompts.delete(nonce);
+    await this.startTicket(interaction, item.initialSelection, { skipVouchReminder: true });
+    return true;
   }
 
   async handleMessageInOrder(message) {
