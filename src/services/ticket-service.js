@@ -2408,20 +2408,30 @@ export class TicketService {
       const vouchText = completionVouchText(claimed, origin, destination);
       const guildConfig = claimed.guild_id ? this.guildConfigs.get(claimed.guild_id) : null;
       const guildId = claimed.guild_id ?? this.config.guildId;
-      const channelId = guildConfig?.vouchChannelId ?? (!claimed.guild_id ? this.config.vouchChannelId : null);
+      const channelId = this.vouchChannelForGuild(guildId)
+        ?? guildConfig?.vouchChannelId ?? (!claimed.guild_id ? this.config.vouchChannelId : null);
       const vouchLink = /^\d{17,20}$/.test(String(guildId ?? ''))
         && /^\d{17,20}$/.test(String(channelId ?? ''))
         ? `https://discord.com/channels/${guildId}/${channelId}`
         : null;
 
+      // New swaps are tracked; swaps predating rollout keep their old status
+      // because migration 021 gave existing rows track_vouch = false.
+      if (claimed.track_vouch === true && typeof this.repositories.registerVouchRequest === 'function') {
+        await this.repositories.registerVouchRequest(claimed, vouchText);
+      }
+
       const embed = new EmbedBuilder()
         .setColor(0x9D81F6)
         .setTitle('✅ Your swap is complete')
         .setDescription(
-          'Thanks for using **Danny’s Crypto Swap**.\n\n'
-          + '**Your copyable vouch message**\n'
-          + '```\n' + vouchText + '\n```\n'
-          + 'Only post a vouch if you want to share your experience.',
+          'Thanks for using **Danny’s Crypto Swap!**\n\n'
+          + 'We’d appreciate a vouch if you’d like to share your experience.\n\n'
+          + '**How to vouch**\n'
+          + '① Copy the separate vouch message sent below.\n'
+          + '② Paste it into our vouch channel.\n\n'
+          + '📱 **On mobile?** Long-press the next message and select **Copy Text**.\n\n'
+          + 'Vouching is optional.',
         )
         .setFooter({ text: 'Danny’s Crypto Swap • Completed exchange' });
       const components = vouchLink
@@ -2434,6 +2444,8 @@ export class TicketService {
         components,
         allowedMentions: { parse: [] },
       });
+      // Mobile's long-press Copy Text copies only this standalone message.
+      await this.sendCopyableVouchText(user, vouchText);
       await this.repositories.completeCompletionVouchDm(swap.id);
       return true;
     } catch (error) {
