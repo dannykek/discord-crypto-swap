@@ -120,7 +120,7 @@ describe('voluntary and mobile-friendly vouch tracking', () => {
     const resend = {
       customId: row.components[1].custom_id,
       guildId: GUILD, user: { id: USER, send }, isButton: () => true,
-      reply: vi.fn(),
+      reply: vi.fn().mockResolvedValue(undefined),
     };
     await service.handleInteraction(resend);
     expect(send).toHaveBeenCalledTimes(2);
