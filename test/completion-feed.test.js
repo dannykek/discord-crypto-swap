@@ -116,10 +116,10 @@ describe('completed-deal feed', () => {
     expect(legacyMessage.content).toBe('');
   });
 
-  it('DMs completed swap owners only the thank-you, exact vouch text and channel link (no transcript)', async () => {
+  it('sends two mobile-friendly completion DMs and tracks only new swaps', async () => {
     const guildId = '1394554081246449807';
-    const vouchChannelId = '1522362740415660113';
-    const completed = { ...swap(), ticket_id: 'ticket', guild_id: guildId };
+    const vouchChannelId = '1394567035324731463';
+    const completed = { ...swap(), ticket_id: 'ticket', guild_id: guildId, track_vouch: true };
     const send = vi.fn().mockResolvedValue(undefined);
     const getTicket = vi.fn();
     const fetchChannel = vi.fn();
@@ -127,6 +127,7 @@ describe('completed-deal feed', () => {
       claimCompletionVouchDm: vi.fn().mockResolvedValue(completed),
       completeCompletionVouchDm: vi.fn().mockResolvedValue(undefined),
       failCompletionVouchDm: vi.fn().mockResolvedValue(undefined),
+      registerVouchRequest: vi.fn().mockResolvedValue({ swap_id: 'swap' }),
       getTicket,
     };
     const service = new TicketService({
@@ -149,20 +150,49 @@ describe('completed-deal feed', () => {
 
     await expect(service.notifyCompletionVouch(completed)).resolves.toBe(true);
 
-    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledTimes(2);
     const dm = send.mock.calls[0][0];
     const embed = dm.embeds[0].toJSON();
     expect(embed.title).toBe('✅ Your swap is complete');
-    expect(embed.description).toContain('Thanks for using **Danny’s Crypto Swap**');
-    expect(embed.description).toContain('Vouch <@1412664174042943518> $100 (LTC → USDT BEP 20)');
-    expect(embed.description).toContain('Only post a vouch if you want to share your experience.');
+    expect(embed.description).toContain('Thanks for using **Danny’s Crypto Swap!');
+    expect(embed.description).toContain('**On mobile?** Long-press the next message and select **Copy Text**');
+    expect(embed.description).not.toContain('Vouch <@');
     expect(embed.description).not.toMatch(/transcript|attachment/i);
-    expect(dm.components[0].toJSON().components[0].url).toBe(`https://discord.com/channels/${guildId}/${vouchChannelId}`);
+    expect(dm.components[0].toJSON().components[0].url).toBe(
+      'https://discord.com/channels/' + guildId + '/' + vouchChannelId,
+    );
+    expect(send.mock.calls[1][0]).toEqual({
+      content: 'Vouch <@1412664174042943518> $100 (LTC → USDT BEP 20)',
+      allowedMentions: { parse: [] },
+    });
     expect(dm).not.toHaveProperty('files');
     expect(dm.allowedMentions).toEqual({ parse: [] });
     expect(getTicket).not.toHaveBeenCalled();
     expect(fetchChannel).not.toHaveBeenCalled();
+    expect(repositories.registerVouchRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ track_vouch: true }), 'Vouch <@1412664174042943518> $100 (LTC → USDT BEP 20)',
+    );
     expect(repositories.completeCompletionVouchDm).toHaveBeenCalledWith('swap');
+  });
+
+  it('does not create vouch tracking records for pre-rollout successful swaps', async () => {
+    const completed = { ...swap(), guild_id: '1394554081246449807', track_vouch: false };
+    const registerVouchRequest = vi.fn();
+    const send = vi.fn().mockResolvedValue({});
+    const service = new TicketService({
+      client: { users: { fetch: vi.fn().mockResolvedValue({ send }) } },
+      repositories: {
+        claimCompletionVouchDm: vi.fn().mockResolvedValue(completed),
+        registerVouchRequest,
+        completeCompletionVouchDm: vi.fn(),
+      },
+      catalogue: { getAsset: () => ({ symbol: 'LTC', blockchain: 'ltc' }) },
+      coinPolicy: {}, emojis: {}, oneClick: {}, qrService: {},
+      config: { guildId: '1394554081246449807' },
+      health: {}, logger: { warn: vi.fn() },
+    });
+    await service.notifyCompletionVouch(completed);
+    expect(registerVouchRequest).not.toHaveBeenCalled();
   });
 
   it('never solicits a completed-swap vouch for an unconfirmed payout broadcast', async () => {
