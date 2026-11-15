@@ -676,6 +676,9 @@ export class TicketService {
       });
       return true;
     }
+    if (interaction.isButton?.() && interaction.customId?.startsWith('vouch:')) {
+      return this.handleVouchReminderButton(interaction);
+    }
     if (interaction.customId === 'panel:check-price' || interaction.customId?.startsWith('price:')) {
       return this.priceCheck.handle(interaction);
     }
@@ -776,7 +779,7 @@ export class TicketService {
     });
   }
 
-  async startTicket(interaction, initialSelection = null) {
+  async startTicket(interaction, initialSelection = null, { skipVouchReminder = false } = {}) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const guildConfig = this.guildConfigs.get(interaction.guildId);
     if (!guildConfig) {
@@ -796,6 +799,25 @@ export class TicketService {
       if (!origin || !destination || !/^\d+$/.test(amountBase) || BigInt(amountBase) <= 0n) {
         await interaction.editReply('Your selected pair is no longer available. Start a new price check.');
         return;
+      }
+    }
+
+    if (!skipVouchReminder && typeof this.repositories.listPendingVouchRequests === 'function') {
+      try {
+        let pending = await this.repositories.listPendingVouchRequests(interaction.guildId, interaction.user.id);
+        if (pending.length > 0) {
+          await this.reconcileRecentVouches(interaction.guildId, interaction.user.id, pending);
+          pending = await this.repositories.listPendingVouchRequests(interaction.guildId, interaction.user.id);
+          if (pending.length > 0) {
+            await this.offerVouchReminder(interaction, guildConfig, pending[0], initialSelection);
+            return;
+          }
+        }
+      } catch (error) {
+        // An optional testimonial reminder must never prevent a customer
+        // from opening a legitimate new swap ticket.
+        this.logger.warn({ userId: interaction.user.id, errorName: error.name },
+          'Could not check pending vouches; continuing to normal ticket creation');
       }
     }
 
