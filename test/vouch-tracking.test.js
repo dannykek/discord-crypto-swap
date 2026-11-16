@@ -26,13 +26,14 @@ function makeService({ repositories = {}, client = {}, health = { isReady: () =>
 describe('voluntary and mobile-friendly vouch tracking', () => {
   it('recognizes only real customer messages in the configured vouch channel', async () => {
     const send = vi.fn().mockResolvedValue({});
+    const fetchUser = vi.fn().mockResolvedValue({ send });
     const recordVouchSubmission = vi.fn().mockResolvedValue({
       swap_id: '5d0c420c-412a-40b1-925e-c147210c7336',
     });
     const getOpenTicketByChannel = vi.fn().mockResolvedValue(null);
     const service = makeService({
       repositories: { recordVouchSubmission, getOpenTicketByChannel },
-      client: { users: { fetch: vi.fn().mockResolvedValue({ send }) } },
+      client: { users: { fetch: fetchUser } },
     });
     const message = {
       id: '1500000000000000001',
@@ -46,8 +47,8 @@ describe('voluntary and mobile-friendly vouch tracking', () => {
     expect(recordVouchSubmission).toHaveBeenCalledWith(
       GUILD, USER, message.id, message.content, message.createdAt,
     );
-    expect(send).toHaveBeenCalledOnce();
-    expect(send.mock.calls[0][0].embeds[0].toJSON().title).toContain('Vouch received');
+    expect(fetchUser).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
 
     await expect(service.handleMessage({ ...message, id: '1500000000000000002',
       content: 'Hi there' })).resolves.toBe(false);
