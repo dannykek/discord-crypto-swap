@@ -133,19 +133,6 @@ export class TicketService {
       message.createdAt ?? new Date(message.createdTimestamp ?? Date.now()),
     );
     if (!record) return false;
-    try {
-      const user = await this.client.users.fetch(message.author.id);
-      await user.send({
-        embeds: [new EmbedBuilder()
-          .setColor(0x9D81F6)
-          .setTitle('✅ Vouch received!')
-          .setDescription('Thanks for sharing your experience with **Danny’s Crypto Swap**! Your vouch has been recorded. You can start your next exchange whenever you’re ready.')],
-        allowedMentions: { parse: [] },
-      });
-    } catch (error) {
-      this.logger.warn({ userId: message.author.id, errorName: error.name },
-        'Vouch recorded but the confirmation DM could not be delivered');
-    }
     return true;
   }
 
