@@ -49,7 +49,6 @@ const MAX_ACTIVE_TICKETS_PER_USER = 3;
 const VOUCH_GUILD_ID = '1394554081246449807';
 const VOUCH_CHANNEL_ID = '1394567035324731463';
 const VOUCH_REMINDER_LIFETIME_MS = 10 * 60_000;
-const VOUCH_REMINDER_DM_COOLDOWN_MS = 10 * 60_000;
 const VOUCH_MESSAGE_PATTERN = new RegExp(String.raw`\bvouch\s+<@!?${VOUCH_TARGET_ID}>`, 'i');
 const STALE_APPLICATION_COMMAND_NAMES = Object.freeze(['mutuals', 'setup']);
 const ROUTE_CHECK_COOLDOWN_MS = 30_000;
@@ -92,7 +91,6 @@ export class TicketService {
     this.centralTranscriptChannel = null;
     this.priceCheck = new PriceCheckFlow(this);
     this.vouchReminderPrompts = new Map();
-    this.vouchReminderDmTimes = new Map();
   }
 
   setStatusWorker(statusWorker) {
@@ -179,18 +177,6 @@ export class TicketService {
       expiresAt: now + VOUCH_REMINDER_LIFETIME_MS,
     });
 
-    const key = interaction.guildId + ':' + interaction.user.id;
-    let sent = false;
-    if (now - (this.vouchReminderDmTimes.get(key) ?? 0) >= VOUCH_REMINDER_DM_COOLDOWN_MS) {
-      try {
-        await this.sendCopyableVouchText(interaction.user, pending.vouch_text);
-        this.vouchReminderDmTimes.set(key, now);
-        sent = true;
-      } catch (error) {
-        this.logger.warn({ userId: interaction.user.id, errorName: error.name },
-          'Could not DM copyable outstanding vouch text');
-      }
-    }
     const channelId = this.vouchChannelForGuild(interaction.guildId) ?? guildConfig.vouchChannelId;
     const buttons = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('vouch:continue:' + nonce)
@@ -208,9 +194,9 @@ export class TicketService {
       .setTitle('📝 You haven’t vouched for your last swap')
       .setDescription(
         'Thanks for exchanging with us again! Your last completed swap still has an optional vouch pending.\n\n'
-        + (sent ? 'I sent your copyable vouch text in a separate DM.\n\n' : 'Your vouch text is available in your DMs. Use **Resend Vouch Text** if needed.\n\n')
+        + 'Your copyable vouch text is in a separate private message directly below this reminder.\n\n'
         + '**How to vouch**\n'
-        + '① Copy the separate vouch message and post it in our vouch channel.\n'
+        + '① Copy the vouch message below and post it in our vouch channel.\n'
         + '② **On mobile?** Long-press the message and tap **Copy Text**.\n\n'
         + 'Vouching is voluntary — you can **Continue to Swap** without posting one.',
       );
@@ -219,6 +205,16 @@ export class TicketService {
       components: [buttons],
       allowedMentions: { parse: [] },
     });
+    try {
+      await interaction.followUp({
+        content: pending.vouch_text,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    } catch (error) {
+      this.logger.warn({ userId: interaction.user.id, errorName: error.name },
+        'Could not send private copyable outstanding vouch text');
+    }
   }
 
   async handleVouchReminderButton(interaction) {
@@ -232,13 +228,10 @@ export class TicketService {
       return true;
     }
     if (action === 'resend') {
-      try {
-        await this.sendCopyableVouchText(interaction.user, item.vouchText);
-        this.vouchReminderDmTimes.set(item.guildId + ':' + item.userId, Date.now());
-        await this.privateReply(interaction, 'Sent the standalone vouch text to your DMs. On mobile, long-press it and tap Copy Text.');
-      } catch {
-        await this.privateReply(interaction, 'I couldn’t DM you. Please enable direct messages from this server and try again. You can still continue swapping.');
-      }
+      await this.privateReply(interaction, {
+        content: item.vouchText,
+        allowedMentions: { parse: [] },
+      });
       return true;
     }
     this.vouchReminderPrompts.delete(nonce);
