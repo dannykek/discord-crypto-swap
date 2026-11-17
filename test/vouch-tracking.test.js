@@ -59,7 +59,7 @@ describe('voluntary and mobile-friendly vouch tracking', () => {
     expect(recordVouchSubmission).toHaveBeenCalledOnce();
   });
 
-  it('reminds on the next swap, DMs a standalone vouch, and lets the user continue', async () => {
+  it('reminds on the next swap, privately posts copyable vouch text below, and lets the user continue', async () => {
     const pending = { swap_id: 'swap-one', user_id: USER, guild_id: GUILD,
       vouch_text: COPY, completed_at: new Date('2026-11-15T12:00:00Z') };
     const send = vi.fn().mockResolvedValue({});
@@ -73,13 +73,21 @@ describe('voluntary and mobile-friendly vouch tracking', () => {
       user: { id: USER, username: 'member', send },
       deferReply: vi.fn().mockResolvedValue(undefined),
       editReply: vi.fn().mockResolvedValue(undefined),
+      followUp: vi.fn().mockResolvedValue(undefined),
     };
     await service.startTicket(interaction);
     expect(interaction.deferReply).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledWith({ content: COPY, allowedMentions: { parse: [] } });
+    expect(send).not.toHaveBeenCalled();
     expect(interaction.editReply).toHaveBeenCalledOnce();
+    expect(interaction.followUp).toHaveBeenCalledOnce();
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: COPY, flags: 64, allowedMentions: { parse: [] },
+    });
+    expect(interaction.editReply.mock.invocationCallOrder[0]).toBeLessThan(interaction.followUp.mock.invocationCallOrder[0]);
     const reminder = interaction.editReply.mock.calls[0][0];
     expect(reminder.embeds[0].toJSON().description).toContain('Vouching is voluntary');
+    expect(reminder.embeds[0].toJSON().description).toContain('directly below this reminder');
+    expect(reminder.embeds[0].toJSON().description).not.toContain('separate DM');
     expect(reminder.embeds[0].toJSON().description).toContain('On mobile?');
     expect(reminder.components[0].toJSON().components.map(x => x.label)).toEqual([
       'Continue to Swap', 'Resend Vouch Text', 'Open Vouch Channel',
@@ -99,9 +107,14 @@ describe('voluntary and mobile-friendly vouch tracking', () => {
     const interaction = {
       guildId: GUILD, user: { id: USER, send },
       editReply: vi.fn(),
+      followUp: vi.fn(),
     };
     await service.offerVouchReminder(interaction, { vouchChannelId: VOUCH_CHANNEL },
       { vouch_text: COPY }, selection);
+    expect(send).not.toHaveBeenCalled();
+    expect(interaction.followUp).toHaveBeenCalledWith({
+      content: COPY, flags: 64, allowedMentions: { parse: [] },
+    });
     const buttonId = interaction.editReply.mock.calls[0][0].components[0].toJSON()
       .components[0].custom_id;
     const resume = vi.spyOn(service, 'startTicket').mockResolvedValue();
@@ -114,9 +127,14 @@ describe('voluntary and mobile-friendly vouch tracking', () => {
   it('sends the copyable vouch again on request without forcing a new ticket', async () => {
     const service = makeService();
     const send = vi.fn().mockResolvedValue({});
-    const requester = { guildId: GUILD, user: { id: USER, send }, editReply: vi.fn() };
+    const requester = { guildId: GUILD, user: { id: USER, send }, editReply: vi.fn(),
+      followUp: vi.fn() };
     await service.offerVouchReminder(requester, { vouchChannelId: VOUCH_CHANNEL },
       { vouch_text: COPY }, null);
+    expect(send).not.toHaveBeenCalled();
+    expect(requester.followUp).toHaveBeenCalledWith({
+      content: COPY, flags: 64, allowedMentions: { parse: [] },
+    });
     const row = requester.editReply.mock.calls[0][0].components[0].toJSON();
     const resend = {
       customId: row.components[1].custom_id,
@@ -124,11 +142,10 @@ describe('voluntary and mobile-friendly vouch tracking', () => {
       reply: vi.fn().mockResolvedValue(undefined),
     };
     await service.handleInteraction(resend);
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[1][0]).toEqual({ content: COPY, allowedMentions: { parse: [] } });
-    expect(resend.reply).toHaveBeenCalledWith(
-      expect.objectContaining({ flags: 64 }),
-    );
+    expect(send).not.toHaveBeenCalled();
+    expect(resend.reply).toHaveBeenCalledWith({
+      content: COPY, flags: 64, allowedMentions: { parse: [] },
+    });
   });
 
   it('maps a matching posted vouch to its swap and never credits the same message twice', async () => {
